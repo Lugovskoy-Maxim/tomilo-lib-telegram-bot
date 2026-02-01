@@ -19,7 +19,7 @@ async function viewTitle(ctx, titleId, chapterPage = 1) {
 
     // Получаем общее количество глав
     const countResponse = await axios.get(
-      `${API_BASE_URL}/chapters/count?title=${titleId}`,
+      `${API_BASE_URL}/titles/${titleId}/chapters/count`,
     );
     const totalChapters =
       countResponse.data.data?.count || countResponse.data.count || 0;
