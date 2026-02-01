@@ -1,5 +1,4 @@
 const { Telegraf, Markup } = require('telegraf');
-const cron = require('node-cron');
 const axios = require('axios');
 const { BOT_TOKEN, API_BASE_URL } = require('./config');
 const { searchTitles } = require('./search');
@@ -12,12 +11,8 @@ const bot = new Telegraf(BOT_TOKEN);
 const { session } = require('telegraf');
 bot.use(session());
 
-// Хранение ID чатов для отправки уведомлений
-let chatIds = new Set();
-
 // Команда /start
 bot.start((ctx) => {
-    chatIds.add(ctx.chat.id);
     ctx.reply('Привет! Я бот для чтения манги и новелл.',
         Markup.keyboard([
             ['🔍 Поиск тайтлов', '📖 Мои тайтлы'],
@@ -29,7 +24,7 @@ bot.start((ctx) => {
 
 // Команда /help
 bot.help((ctx) => {
-    ctx.reply('Я бот для уведомлений о новых главах. Когда появляются новые главы, я отправляю уведомления.\n\nДоступные команды:\n/search - Поиск тайтлов\n/chapters - Просмотр глав\n/help - Помощь');
+    ctx.reply('Я бот для чтения манги и новелл. Нажмите кнопку "🆕 Новые главы" для просмотра последних обновлений.\n\nДоступные команды:\n/search - Поиск тайтлов\n/catalog - Каталог\n/new - Новые главы\n/help - Помощь');
 });
 
 // Обработчик для кнопки "🔍 Поиск тайтлов"
@@ -40,6 +35,11 @@ bot.hears('🔍 Поиск тайтлов', async (ctx) => {
 // Команда /search
 bot.command('search', async (ctx) => {
     await searchTitles(ctx, bot);
+});
+
+// Команда /new
+bot.command('new', async (ctx) => {
+    await showNewChaptersFeed(ctx);
 });
 
 // Обработчик для кнопки "📚 Каталог"
@@ -144,9 +144,13 @@ bot.action(/read_feed_chapter_(.+)/, async (ctx) => {
 async function showNewChaptersFeed(ctx) {
     try {
         // Получаем список последних обновлений из API
-        const response = await axios.get(`${API_BASE_URL}/titles/titles/latest-updates?limit=10`, { timeout: 15000 });
+        const response = await axios.get(`${API_BASE_URL}/titles/latest-updates?limit=10`, { timeout: 15000 });
         const chaptersData = response.data.data || response.data;
         const chapters = Array.isArray(chaptersData) ? chaptersData : (chaptersData.chapters || []);
+
+        // Отладка: выводим структуру ответа API
+        console.log('API Response structure:', JSON.stringify(chaptersData, null, 2));
+        console.log('First chapter structure:', JSON.stringify(chapters[0], null, 2));
 
         if (chapters.length === 0) {
             await ctx.reply('Новых глав пока нет.');
@@ -158,15 +162,22 @@ async function showNewChaptersFeed(ctx) {
 
         for (let i = 0; i < chapters.length; i++) {
             const chapter = chapters[i];
-            const titleName = chapter.title?.name || 'Без названия';
-            const chapterNumber = chapter.number || chapter.chapterNumber || 'N/A';
+            const titleName = chapter.title || 'Без названия';
+            const titleSlug = chapter.slug || '';
+            const chapterNumber = chapter.chapterNumber || 'N/A';
+            const chapterId = chapter.id; // This seems to be the title ID, not chapter ID
 
-            message += `${i + 1}. *${titleName}* - Глава ${chapterNumber}\n`;
+            message += `${i + 1}. *${titleName}* - ${chapter.chapter}\n`;
 
             // Добавляем дату, если есть
-            if (chapter.createdAt) {
-                const date = new Date(chapter.createdAt).toLocaleDateString('ru-RU');
+            if (chapter.timeAgo) {
+                const date = new Date(chapter.timeAgo).toLocaleDateString('ru-RU');
                 message += `   📅 ${date}\n`;
+            }
+
+            // Добавляем ссылку на чтение на сайте
+            if (titleSlug && chapterId) {
+                message += `   [Читать на сайте](https://tomilo-lib.ru/titles/${titleSlug})\n`;
             }
 
             message += '\n';
@@ -195,66 +206,9 @@ async function showNewChaptersFeed(ctx) {
     }
 }
 
-// Функция для проверки новых глав
-async function checkForNewChapters() {
-    try {
-        // Получаем список последних глав из API
-        const response = await axios.get(`${API_BASE_URL}/chapters?limit=5&sort=createdAt:desc`, { timeout: 15000 });
-        const chaptersData = response.data.data || response.data;
-        const chapters = Array.isArray(chaptersData) ? chaptersData : (chaptersData.chapters || []);
-        
-        // Отправляем уведомления о новых главах
-        for (const chapter of chapters) {
-            // Проверяем, не отправляли ли мы уже уведомление об этой главе
-            // В реальной реализации здесь должна быть проверка в базе данных
-            const chapterKey = `${chapter.titleId}-${chapter.number}`;
-            
-            // Отправляем уведомление всем подписчикам
-            for (const chatId of chatIds) {
-                try {
-                    // Получаем информацию о тайтле
-                    let titleSlug = chapter.titleId?._id || chapter.titleId;
-                    if (chapter.title?.slug) {
-                        titleSlug = chapter.title.slug;
-                    } else if (chapter.titleId) {
-                        try {
-                            const titleResponse = await axios.get(`${API_BASE_URL}/titles/${chapter.titleId}`, { timeout: 10000 });
-                            const titleData = titleResponse.data.data || titleResponse.data;
-                            if (titleData?.slug) {
-                                titleSlug = titleData.slug;
-                            }
-                        } catch (titleError) {
-                            // Ошибка получения информации
-                        }
-                    }
-                    
-                    const baseUrl = API_BASE_URL.replace('/api', '');
-                    await bot.telegram.sendMessage(
-                        chatId,
-                        `Новая глава!\n\nНазвание: ${chapter.title?.name || 'Без названия'}\nНомер: ${chapter.number}\n${chapter.title?.description || ''}`,
-                        {
-                            reply_markup: Markup.inlineKeyboard([
-                                Markup.button.url('Читать', `${baseUrl}/titles/${titleSlug}/chapter/${chapter._id}`)
-                            ]),
-                            // Добавляем таймаут для отправки сообщения
-                        }
-                    );
-                } catch (error) {
-                    console.error('Ошибка отправки сообщения:', error);
-                }
-            }
-        }
-    } catch (error) {
-        console.error('Ошибка при проверке новых глав:', error);
-    }
-}
-
-// Планировщик для регулярной проверки новых глав (каждые 30 минут)
-cron.schedule('*/30 * * * *', () => {
-    // Проверка новых глав
-    checkForNewChapters().catch(error => {
-        console.error('Ошибка при проверке новых глав по расписанию:', error);
-    });
+// Обработчик для кнопки "🆕 Новые главы"
+bot.hears('🆕 Новые главы', async (ctx) => {
+    await showNewChaptersFeed(ctx);
 });
 
 // Запуск бота
@@ -287,3 +241,4 @@ process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 module.exports = bot;
+
