@@ -1,9 +1,10 @@
 const { Markup } = require("telegraf");
 const axios = require("axios");
 const { PDFDocument } = require("pdf-lib");
-const fs = require("fs");
+const fs = require("fs").promises;
 const path = require("path");
 const { API_BASE_URL } = require("./config");
+const sharp = require("sharp");
 
 // Функция для получения базового URL без /api для статических файлов
 const getBaseURL = () => {
@@ -14,13 +15,15 @@ const getBaseURL = () => {
 async function viewTitle(ctx, titleId, chapterPage = 1) {
   try {
     // Получаем информацию о тайтле
-    const titleResponse = await axios.get(`${API_BASE_URL}/titles/${titleId}`, { timeout: 10000 });
+    const titleResponse = await axios.get(`${API_BASE_URL}/titles/${titleId}`, {
+      timeout: 10000,
+    });
     const title = titleResponse.data.data || titleResponse.data;
 
     // Получаем общее количество глав
     const countResponse = await axios.get(
       `${API_BASE_URL}/titles/${titleId}/chapters/count`,
-      { timeout: 10000 }
+      { timeout: 10000 },
     );
     const totalChapters =
       countResponse.data.data?.count || countResponse.data.count || 0;
@@ -99,7 +102,7 @@ async function showChapters(ctx, titleId, page = 1) {
     const offset = (page - 1) * limit;
     const chaptersResponse = await axios.get(
       `${API_BASE_URL}/chapters/title/${titleId}?sort=number:desc&limit=${limit}&offset=${offset}`,
-      { timeout: 15000 }
+      { timeout: 15000 },
     );
     const chaptersData = chaptersResponse.data.data || chaptersResponse.data;
     const chapters = Array.isArray(chaptersData)
@@ -109,7 +112,7 @@ async function showChapters(ctx, titleId, page = 1) {
     // Получаем общее количество глав для пагинации
     const countResponse = await axios.get(
       `${API_BASE_URL}/titles/${titleId}/chapters/count`,
-      { timeout: 10000 }
+      { timeout: 10000 },
     );
     const totalChapters =
       countResponse.data.data?.count ||
@@ -185,22 +188,97 @@ async function showChapters(ctx, titleId, page = 1) {
   }
 }
 
+// Функция для проверки, является ли файл валидным изображением
+async function validateAndFixImage(imageBytes, imageUrl) {
+  try {
+    // Проверяем первые байты для определения типа файла
+    const buffer = Buffer.from(imageBytes);
+
+    // Проверяем PNG сигнатуру
+    if (
+      buffer.length >= 8 &&
+      buffer.slice(0, 8).toString("hex") === "89504e470d0a1a0a"
+    ) {
+      return { type: "png", buffer: imageBytes };
+    }
+
+    // Проверяем JPEG сигнатуру
+    if (buffer.length >= 2 && buffer.slice(0, 2).toString("hex") === "ffd8") {
+      return { type: "jpeg", buffer: imageBytes };
+    }
+
+    // Проверяем WebP сигнатуру
+    if (
+      buffer.length >= 12 &&
+      buffer.slice(0, 4).toString() === "RIFF" &&
+      buffer.slice(8, 12).toString() === "WEBP"
+    ) {
+      return { type: "webp", buffer: imageBytes };
+    }
+
+    // Если тип не определен, пробуем конвертировать с помощью sharp
+    try {
+      const pngBuffer = await sharp(imageBytes).png().toBuffer();
+      return { type: "png", buffer: pngBuffer };
+    } catch (sharpError) {
+      console.error("Sharp conversion failed:", sharpError.message);
+      return null;
+    }
+  } catch (error) {
+    console.error("Image validation error:", error.message);
+    return null;
+  }
+}
+
+// Функция для проверки наличия SOI маркера в JPEG файле
+function hasSOIMarker(imageBuffer) {
+  // SOI маркер - 0xFFD8
+  return imageBuffer[0] === 0xFF && imageBuffer[1] === 0xD8;
+}
+
+// Функция для исправления поврежденных JPEG файлов
+async function fixJPEG(imageBuffer) {
+  try {
+    // Конвертируем в PNG и обратно в JPEG
+    const pngBuffer = await sharp(imageBuffer).png().toBuffer();
+    const fixedJpegBuffer = await sharp(pngBuffer).jpeg().toBuffer();
+    return fixedJpegBuffer;
+  } catch (error) {
+    console.error('Failed to fix JPEG:', error);
+    return imageBuffer;
+  }
+}
+
+// Функция для создания директории, если она не существует
+async function ensureDir(dirPath) {
+  try {
+    await fs.access(dirPath);
+  } catch (error) {
+    // Директория не существует, создаем ее
+    await fs.mkdir(dirPath, { recursive: true });
+  }
+}
+
 // Функция для выбора главы и создания PDF
 async function selectChapter(ctx, titleId, chapterIndex) {
-  let pdfPath; // Объявляем переменную в начале функции
-  let chapterId; // Объявляем переменную для ID главы
-  let statusMessage; // Объявляем переменную для сообщения о статусе
+  let pdfPath = null;
+  let chapterId = null;
+  let statusMessage = null;
+  let pdfDoc = null;
+  let successImages = 0;
+  let tempDir = null;
+
   try {
     // Рассчитываем страницу и индекс на странице
     const limit = 50; // Количество глав на странице
     const page = Math.floor(chapterIndex / limit) + 1;
     const indexOnPage = chapterIndex % limit;
-    
+
     // Получаем главы тайтла с пагинацией
     const offset = (page - 1) * limit;
     const chaptersResponse = await axios.get(
       `${API_BASE_URL}/chapters/title/${titleId}?sort=number:desc&limit=${limit}&offset=${offset}`,
-      { timeout: 15000 }
+      { timeout: 15000 },
     );
     const chaptersData = chaptersResponse.data.data || chaptersResponse.data;
     const chapters = Array.isArray(chaptersData)
@@ -218,60 +296,57 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     // Получаем полную информацию о главе, включая страницы
     const chapterResponse = await axios.get(
       `${API_BASE_URL}/chapters/${chapterId}`,
-      { timeout: 15000 }
+      { timeout: 15000 },
     );
     const chapter = chapterResponse.data.data || chapterResponse.data;
 
     // Получаем информацию о тайтле
-    const titleResponse = await axios.get(`${API_BASE_URL}/titles/${titleId}`, { timeout: 10000 });
+    const titleResponse = await axios.get(`${API_BASE_URL}/titles/${titleId}`, {
+      timeout: 10000,
+    });
     const title = titleResponse.data.data || titleResponse.data;
 
     // Изображения из полной информации о главе
     const images = chapter.pages || [];
-    // Отображаем пути изображений для отладки
 
     if (!images || images.length === 0) {
       await ctx.reply("Изображения главы не найдены.");
       return;
     }
 
+    // Создаем временную директорию для изображений
+    tempDir = path.join(__dirname, `temp_${chapterId}`);
+    await ensureDir(tempDir);
+
     // Отправляем сообщение о начале генерации PDF с номером главы
     statusMessage = await ctx.reply(
-      `📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'} формируется... Пожалуйста, подождите. Это может занять несколько минут.`,
+      `📖 Глава ${chapter.number || chapter.chapterNumber || "N/A"} формируется...\nЗагружено изображений: 0/${images.length}`,
     );
 
-    // Создаем PDF
-    pdfPath = path.join(__dirname, `chapter_${chapter._id || chapterId || 'temp'}.pdf`);
-    
-    // Инициализируем PDF документ
-    const pdfDoc = await PDFDocument.create();
-
-    // Обрабатываем каждое изображение с обновлением статуса
+    // Скачиваем и обрабатываем изображения
+    const imagePaths = [];
     for (let i = 0; i < images.length; i++) {
       const imageUrl = images[i];
+
       try {
-        // Обновляем сообщение о статусе с прогрессом
-        const progress = Math.round(((i + 1) / images.length) * 100);
-        // Добавляем задержку перед обновлением сообщения, чтобы избежать превышения лимита запросов
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        await ctx.telegram.editMessageText(
-          ctx.chat.id,
-          statusMessage.message_id,
-          null,
-          `📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'} формируется... ${progress}%\nОбрабатывается изображение ${i + 1} из ${images.length}`,
-        );
+        // Обновляем статус каждые 5 изображений или для первого/последнего
+        if (i % 5 === 0 || i === images.length - 1) {
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            statusMessage.message_id,
+            null,
+            `📖 Глава ${chapter.number || chapter.chapterNumber || "N/A"} формируется...\nЗагружено изображений: ${i}/${images.length}`,
+          );
+        }
 
         // Формируем полный URL для изображения страницы
         const baseURL = getBaseURL();
         let fullImageUrl;
         if (imageUrl.startsWith("/uploads/")) {
-          // Путь уже содержит /uploads/, используем как есть
           fullImageUrl = `${baseURL}${imageUrl}`;
         } else if (imageUrl.startsWith("/")) {
-          // Путь начинается с /, но не содержит /uploads/
           fullImageUrl = `${baseURL}/uploads${imageUrl}`;
         } else {
-          // Относительный путь
           fullImageUrl = `${baseURL}/uploads/${imageUrl}`;
         }
 
@@ -280,26 +355,73 @@ async function selectChapter(ctx, titleId, chapterIndex) {
         try {
           const imageResponse = await axios.get(fullImageUrl, {
             responseType: "arraybuffer",
-            timeout: 60000 // 60 seconds for image download
+            timeout: 30000,
+            headers: {
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            },
           });
           imageBytes = imageResponse.data;
         } catch (error) {
-          console.error(`Error downloading image ${i + 1} from ${fullImageUrl}:`, error.message);
-          // Пропускаем изображение, если не удалось его загрузить
+          console.error(`Error downloading image ${i + 1}:`, error.message);
           continue;
         }
 
-        // Определяем тип изображения и встраиваем его в PDF
+        // Валидируем и фиксим изображение
+        let validatedImage = await validateAndFixImage(imageBytes, imageUrl);
+        if (!validatedImage) {
+          console.error(`Failed to validate image ${i + 1}`);
+          continue;
+        }
+
+        // Проверяем, является ли изображение действительным JPEG
+        if (validatedImage.type === "jpeg") {
+          // Проверяем наличие SOI маркера в начале файла
+          if (!hasSOIMarker(validatedImage.buffer)) {
+            console.log(`Invalid JPEG detected for image ${i + 1}, attempting to fix...`);
+            // Конвертируем в PNG и обратно в JPEG для исправления
+            validatedImage.buffer = await fixJPEG(validatedImage.buffer);
+          }
+        }
+
+        // Сохраняем изображение во временную директорию
+        const imagePath = path.join(tempDir, `${title.name}_image_${i}.${validatedImage.type}`);
+        await fs.writeFile(imagePath, validatedImage.buffer);
+        imagePaths.push(imagePath);
+        successImages++;
+      } catch (error) {
+        console.error(`Error processing image ${i + 1}:`, error.message);
+      }
+    }
+
+    // Проверяем, были ли успешно добавлены изображения
+    if (successImages === 0) {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        statusMessage.message_id,
+        null,
+        "❌ Не удалось загрузить ни одного изображения для создания PDF.",
+      );
+      return;
+    }
+
+    // Создаем PDF из сохраненных изображений
+    pdfDoc = await PDFDocument.create();
+    
+    // Обрабатываем каждое сохраненное изображение
+    for (let i = 0; i < imagePaths.length; i++) {
+      try {
+        const imagePath = imagePaths[i];
+        const imageBytes = await fs.readFile(imagePath);
+        
+        // Определяем тип изображения по расширению файла
+        const imageExt = path.extname(imagePath).toLowerCase();
         let imageEmbed;
-        if (imageUrl.toLowerCase().endsWith('.png')) {
+        
+        if (imageExt === '.png') {
           imageEmbed = await pdfDoc.embedPng(imageBytes);
-        } else if (imageUrl.toLowerCase().endsWith('.jpg') || imageUrl.toLowerCase().endsWith('.jpeg')) {
+        } else if (imageExt === '.jpg' || imageExt === '.jpeg') {
           imageEmbed = await pdfDoc.embedJpg(imageBytes);
-        } else if (imageUrl.toLowerCase().endsWith('.webp')) {
-          // Для WebP конвертируем в PNG
-          const { default: sharp } = await import('sharp');
-          const pngBuffer = await sharp(imageBytes).png().toBuffer();
-          imageEmbed = await pdfDoc.embedPng(pngBuffer);
         } else {
           // Пытаемся определить тип автоматически
           try {
@@ -308,15 +430,8 @@ async function selectChapter(ctx, titleId, chapterIndex) {
             try {
               imageEmbed = await pdfDoc.embedJpg(imageBytes);
             } catch (e2) {
-              // Пытаемся конвертировать в PNG
-              try {
-                const { default: sharp } = await import('sharp');
-                const pngBuffer = await sharp(imageBytes).png().toBuffer();
-                imageEmbed = await pdfDoc.embedPng(pngBuffer);
-              } catch (e3) {
-                console.error(`Failed to embed image ${i + 1}`);
-                continue;
-              }
+              console.error(`Failed to embed image ${i + 1}`);
+              continue;
             }
           }
         }
@@ -332,33 +447,22 @@ async function selectChapter(ctx, titleId, chapterIndex) {
           height: imageEmbed.height,
         });
       } catch (error) {
-        console.error(`Error processing image ${i + 1}:`, error);
+        console.error(`Error embedding image ${i + 1}:`, error.message);
       }
     }
 
     // Сохраняем PDF
+    pdfPath = path.join(__dirname, `${title.name}_chapter_${chapterId}.pdf`);
     const pdfBytes = await pdfDoc.save();
-    fs.writeFileSync(pdfPath, pdfBytes);
+    await fs.writeFile(pdfPath, pdfBytes);
 
-    console.log('PDF creation completed, proceeding to send');
-
-    // Обновляем сообщение о статусе на "Отправка PDF"
-    try {
-      console.log('Updating status message to "Отправка PDF"');
-      // Добавляем проверку существования сообщения перед обновлением
-      if (statusMessage && statusMessage.message_id) {
-        await ctx.telegram.editMessageText(
-          ctx.chat.id,
-          statusMessage.message_id,
-          null,
-          `📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'} формируется... 100%\nОтправка PDF...`,
-        );
-        console.log('Status message updated to "Отправка PDF"');
-      }
-    } catch (editError) {
-      // Игнорируем ошибки редактирования сообщения
-      console.error('Ошибка при обновлении сообщения о статусе:', editError);
-    }
+    // Обновляем сообщение о статусе
+    await ctx.telegram.editMessageText(
+      ctx.chat.id,
+      statusMessage.message_id,
+      null,
+      `✅ PDF создан успешно!\nДобавлено изображений: ${successImages}/${images.length}\nОтправка...`,
+    );
 
     // Создаем кнопки навигации
     const navigationButtons = [];
@@ -380,91 +484,72 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     }
 
     // Отправляем PDF с информацией о главе
-    const caption = `📚 *${title.name}*\n📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'}\n📅 ${chapter.createdAt ? new Date(chapter.createdAt).toLocaleDateString() : "Дата неизвестна"}`;
+    const caption = `📚 *${title.name}*\n📖 Глава ${chapter.number || chapter.chapterNumber || "N/A"}\n📅 ${chapter.createdAt ? new Date(chapter.createdAt).toLocaleDateString() : "Дата неизвестна"}\n✅ Изображений: ${successImages}/${images.length}`;
 
+    // Проверяем существование файла перед отправкой
     try {
-      // Проверяем существование файла перед отправкой
-      if (!fs.existsSync(pdfPath)) {
-        throw new Error("PDF файл не найден");
-      }
-      
-      // Отправляем PDF с увеличенным таймаутом
-      // Увеличиваем таймаут до 10 минут для отправки больших файлов
-      console.log('Sending PDF to user');
-      // Увеличиваем таймаут для отправки больших файлов
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Timeout while sending PDF'));
-        }, 300000); // 5 минут таймаут
-        
-        ctx.replyWithDocument(
-          { source: pdfPath, filename: `Глава_${chapter.number || chapter.chapterNumber || 'undefined'}.pdf` },
-          {
-            caption: caption,
-            parse_mode: "Markdown",
-            reply_markup: {
-              inline_keyboard: [navigationButtons],
-            },
-          }
-        ).then(() => {
-          clearTimeout(timeout);
-          resolve();
-        }).catch((error) => {
-          clearTimeout(timeout);
-          reject(error);
-        });
-      });
-      console.log('PDF sent successfully');
-    } catch (sendError) {
-      console.error('Ошибка при отправке PDF:', sendError);
-      // Проверяем, является ли ошибка таймаутом
-      if (sendError.code === 'ETIMEDOUT' || sendError.message.includes('timeout')) {
-        throw new Error("Таймаут при отправке PDF");
-      }
-      throw new Error("Ошибка при отправке PDF");
+      await fs.access(pdfPath);
+    } catch (error) {
+      throw new Error("PDF файл не найден");
     }
 
-    // Удаляем сообщение о статусе после успешной отправки PDF
-    try {
-      console.log('Deleting status message');
-      // Добавляем проверку существования сообщения перед удалением
-      if (statusMessage && statusMessage.message_id) {
-        await ctx.deleteMessage(statusMessage.message_id);
-        console.log('Status message deleted');
-      }
-    } catch (deleteError) {
-      // Игнорируем ошибки удаления сообщения
-      console.error('Ошибка при удалении сообщения о статусе:', deleteError);
-    }
+    // Отправляем PDF
+    await ctx.replyWithDocument(
+      {
+        source: pdfPath,
+        filename: `${title.name}_глава_${chapter.number || chapter.chapterNumber || "N/A"}.pdf`,
+      },
+      {
+        caption: caption,
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [navigationButtons],
+        },
+      },
+    );
+
+    // Удаляем сообщение о статусе
+    await ctx.deleteMessage(statusMessage.message_id);
   } catch (error) {
-    // Ошибка при выборе главы
-    console.error('Ошибка при выборе главы:', error);
-    
-    // Удаляем сообщение о статусе в случае ошибки
+    console.error("Ошибка при выборе главы:", error);
+
+    // Обновляем сообщение о статусе в случае ошибки
     if (statusMessage) {
       try {
-        await ctx.deleteMessage(statusMessage.message_id);
-      } catch (deleteError) {
-        // Игнорируем ошибки удаления сообщения
-        console.error('Ошибка при удалении сообщения о статусе:', deleteError);
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          statusMessage.message_id,
+          null,
+          `❌ Ошибка: ${error.message || "Неизвестная ошибка"}`,
+        );
+      } catch (editError) {
+        console.error("Ошибка при обновлении сообщения:", editError);
+      }
+    }
+
+    // Отправляем сообщение об ошибке пользователю
+    await ctx.reply("Произошла ошибка при создании PDF. Попробуйте позже.");
+  } finally {
+    // Удаляем временные файлы и директорию
+    if (tempDir) {
+      try {
+        const files = await fs.readdir(tempDir);
+        for (const file of files) {
+          await fs.unlink(path.join(tempDir, file));
+        }
+        await fs.rmdir(tempDir);
+      } catch (error) {
+        console.error("Ошибка при удалении временной директории:", error);
       }
     }
     
-    // Отправляем сообщение об ошибке пользователю
-    if (error.message === "Ошибка при создании PDF" || error.message === "Таймаут при создании PDF") {
-      await ctx.reply("Извините, произошла ошибка при создании PDF. Пожалуйста, попробуйте еще раз.");
-    } else if (error.message === "Ошибка при отправке PDF" || error.message === "Таймаут при отправке PDF") {
-      await ctx.reply("Извините, отправка PDF заняла слишком много времени. Пожалуйста, попробуйте еще раз.");
-    } else {
-      await ctx.reply("Произошла ошибка при загрузке главы. Попробуйте позже.");
-    }
-  } finally {
-    // Удаляем временный PDF файл после отправки
-    if (pdfPath && fs.existsSync(pdfPath)) {
+    // Удаляем временный PDF файл если он существует
+    if (pdfPath) {
       try {
-        fs.unlinkSync(pdfPath);
-      } catch (unlinkError) {
-        console.error('Ошибка при удалении временного PDF файла:', unlinkError);
+        await fs.access(pdfPath);
+        await fs.unlink(pdfPath);
+      } catch (error) {
+        // Файл не существует или ошибка при удалении
       }
     }
   }
