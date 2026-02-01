@@ -7,9 +7,12 @@ const { getCatalog } = require('../../services/api');
 async function showCatalog(ctx, page = 1) {
     console.log(`[CATALOG] Showing catalog page ${page}`);
     try {
+        console.log(`[CATALOG] Fetching catalog from API...`);
         const { titles, total, totalPages } = await getCatalog(page);
-        
+        console.log(`[CATALOG] API response: titles=${Array.isArray(titles) ? titles.length : 'invalid'}, total=${total}, totalPages=${totalPages}`);
+
         if (!Array.isArray(titles) || titles.length === 0) {
+            console.log('[CATALOG] Catalog is empty or invalid');
             await ctx.reply('Каталог пуст.');
             return;
         }

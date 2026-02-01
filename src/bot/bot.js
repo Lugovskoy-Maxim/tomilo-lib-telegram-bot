@@ -8,6 +8,7 @@ const { BOT_TOKEN } = require('../config');
 const bot = new Telegraf(BOT_TOKEN);
 
 // Добавляем сессию для хранения данных между запросами
+// ВАЖНО: сессия должна быть добавлена ПЕРЕД регистрацией команд
 const { session } = require('telegraf');
 bot.use(session());
 

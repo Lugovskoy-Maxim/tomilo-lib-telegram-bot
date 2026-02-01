@@ -12,9 +12,12 @@ const { createAndSendPDF } = require('../../utils/pdf');
  */
 async function showNewChaptersFeed(ctx) {
     try {
+        console.log('[NAVIGATION] Fetching latest updates...');
         const chapters = await getLatestUpdates(10);
+        console.log(`[NAVIGATION] Got ${chapters.length} chapters`);
 
         if (chapters.length === 0) {
+            console.log('[NAVIGATION] No new chapters found');
             await ctx.reply('Новых глав пока нет.');
             return;
         }

@@ -165,11 +165,43 @@ async function getChapter(chapterId) {
 
 /**
  * Получить последние обновления
+ * Пробуем разные эндпоинты, т.к. структура API может отличаться
  */
 async function getLatestUpdates(limit = 10) {
-    const response = await apiClient.get(`/titles/latest-updates?limit=${limit}`);
-    const chaptersData = response.data.data || response.data;
-    return Array.isArray(chaptersData) ? chaptersData : chaptersData.chapters || [];
+    console.log(`[API] Запрос последних обновлений: limit=${limit}`);
+
+    // Варианты эндпоинтов для последних обновлений
+    const endpoints = [
+        `/titles/latest-updates?limit=${limit}`,
+        `/chapters/latest?limit=${limit}`,
+        `/updates?limit=${limit}`,
+        `/chapters?limit=${limit}&sort=createdAt:desc`
+    ];
+
+    for (const endpoint of endpoints) {
+        try {
+            console.log(`[API] Пробуем эндпоинт: ${endpoint}`);
+            const response = await apiClient.get(endpoint);
+
+            if (response.data && response.data.data) {
+                const chaptersData = response.data.data;
+                const result = Array.isArray(chaptersData) ? chaptersData : chaptersData.chapters || [];
+                if (result.length > 0) {
+                    console.log(`[API] Успешно получены обновления через: ${endpoint}, найдено: ${result.length}`);
+                    return result;
+                }
+            } else if (Array.isArray(response.data)) {
+                console.log(`[API] Успешно получены обновления через: ${endpoint}, найдено: ${response.data.length}`);
+                return response.data;
+            }
+        } catch (error) {
+            console.log(`[API] Ошибка на эндпоинте ${endpoint}: ${error.message}`);
+            continue;
+        }
+    }
+
+    console.log('[API] Не удалось получить обновления ни через один эндпоинт');
+    return [];
 }
 
 module.exports = {
