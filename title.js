@@ -1,0 +1,191 @@
+const { Markup } = require('telegraf');
+const axios = require('axios');
+const PDFDocument = require('pdfkit');
+const fs = require('fs');
+const path = require('path');
+const { API_BASE_URL } = require('./config');
+
+// Функция для отображения информации о тайтле
+async function viewTitle(ctx, titleId, chapterPage = 1) {
+    try {
+        // Получаем информацию о тайтле
+        const titleResponse = await axios.get(`${API_BASE_URL}/titles/${titleId}`);
+        const title = titleResponse.data.data || titleResponse.data;
+        
+        // Получаем главы тайтла
+        const chaptersResponse = await axios.get(`${API_BASE_URL}/chapters?title=${titleId}&sort=number:desc&limit=1000`);
+        const chaptersData = chaptersResponse.data.data || chaptersResponse.data;
+        const chapters = Array.isArray(chaptersData) ? chaptersData : (chaptersData.chapters || []);
+        
+        // Проверяем, есть ли обложка у тайтла
+        if (title.coverImage) {
+            // Отправляем обложку с подписью
+            await ctx.replyWithPhoto(
+                `https://tomilo-lib.ru${title.coverImage}`,
+                {
+                    caption: `📚 *${title.name}*\n📅 Год: ${title.releaseYear || title.year || 'N/A'}\n📖 Статус: ${title.status || 'N/A'}\n📝 Описание: ${title.description || 'Нет описания'}`,
+                    parse_mode: 'Markdown'
+                }
+            );
+        } else {
+            // Если обложки нет, отправляем обычное текстовое сообщение
+            let message = `📚 *${title.name}*\n`;
+            message += `📅 Год: ${title.releaseYear || title.year || 'N/A'}\n`;
+            message += `📖 Статус: ${title.status || 'N/A'}\n`;
+            message += `📝 Описание: ${title.description || 'Нет описания'}\n\n`;
+            await ctx.reply(message, { parse_mode: 'Markdown' });
+        }
+        
+        // Добавляем кнопки для чтения и закладок
+        const buttonRows = [
+            [
+                Markup.button.callback('Читать', `read_title_${titleId}`),
+                Markup.button.callback('🔖 В закладки', `bookmark_${titleId}`)
+            ]
+        ];
+        
+        // Отправляем сообщение с кнопками
+        // Удаляем предыдущее сообщение, если оно существует
+        if (ctx.session && ctx.session.lastMessageId) {
+            try {
+                await ctx.deleteMessage(ctx.session.lastMessageId);
+            } catch (error) {
+                console.log('Не удалось удалить предыдущее сообщение:', error.message);
+            }
+        }
+        
+        const message = await ctx.reply('Главы:', {
+            reply_markup: {
+                inline_keyboard: buttonRows
+            }
+        });
+        
+        // Сохраняем ID сообщения для последующего удаления
+        ctx.session = ctx.session || {};
+        ctx.session.lastMessageId = message.message_id;
+    } catch (error) {
+        console.error('Ошибка получения информации о тайтле:', error);
+        await ctx.reply('Произошла ошибка при получении информации о тайтле. Попробуйте позже.');
+    }
+}
+
+// Функция для отображения глав тайтла
+async function showChapters(ctx, titleId) {
+    try {
+        // Получаем главы тайтла
+        const chaptersResponse = await axios.get(`${API_BASE_URL}/chapters?title=${titleId}&sort=number:desc&limit=1000`);
+        const chaptersData = chaptersResponse.data.data || chaptersResponse.data;
+        const chapters = Array.isArray(chaptersData) ? chaptersData : (chaptersData.chapters || []);
+
+        if (!chapters || chapters.length === 0) {
+            await ctx.reply('Главы не найдены.');
+            return;
+        }
+
+        // Создаем кнопки для глав
+        const chapterButtons = chapters.map((chapter, index) =>
+            Markup.button.callback(`Глава ${chapter.number}`, `select_chapter_${titleId}_${index}`)
+        );
+
+        // Разбиваем кнопки на группы по 2
+        const buttonRows = [];
+        for (let i = 0; i < chapterButtons.length; i += 2) {
+            buttonRows.push(chapterButtons.slice(i, i + 2));
+        }
+
+        // Отправляем сообщение с кнопками
+        await ctx.reply('Выберите главу:', {
+            reply_markup: {
+                inline_keyboard: buttonRows
+            }
+        });
+    } catch (error) {
+        console.error('Ошибка получения глав:', error);
+        await ctx.reply('Произошла ошибка при получении глав. Попробуйте позже.');
+    }
+}
+
+// Функция для выбора главы и создания PDF
+async function selectChapter(ctx, titleId, chapterIndex) {
+    try {
+        // Получаем главы тайтла
+        const chaptersResponse = await axios.get(`${API_BASE_URL}/chapters?title=${titleId}&sort=number:desc&limit=1000`);
+        const chaptersData = chaptersResponse.data.data || chaptersResponse.data;
+        const chapters = Array.isArray(chaptersData) ? chaptersData : (chaptersData.chapters || []);
+
+        if (!chapters || chapters.length === 0 || chapterIndex >= chapters.length) {
+            await ctx.reply('Глава не найдена.');
+            return;
+        }
+
+        const chapter = chapters[chapterIndex];
+
+        // Получаем информацию о тайтле
+        const titleResponse = await axios.get(`${API_BASE_URL}/titles/${titleId}`);
+        const title = titleResponse.data.data || titleResponse.data;
+
+        // Изображения уже есть в объекте главы в поле pages
+        const images = chapter.pages;
+
+        if (!images || images.length === 0) {
+            await ctx.reply('Изображения главы не найдены.');
+            return;
+        }
+
+        // Создаем PDF
+        const pdfPath = path.join(__dirname, `chapter_${chapter._id}.pdf`);
+        const doc = new PDFDocument();
+
+        doc.pipe(fs.createWriteStream(pdfPath));
+
+        for (const imageUrl of images) {
+            try {
+                const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+                const imageBuffer = Buffer.from(imageResponse.data, 'binary');
+
+                // Добавляем изображение в PDF
+                doc.addPage().image(imageBuffer, 0, 0, { width: doc.page.width, height: doc.page.height });
+            } catch (error) {
+                console.error('Ошибка загрузки изображения:', error);
+            }
+        }
+
+        doc.end();
+
+        // Ждем завершения создания PDF
+        await new Promise((resolve) => {
+            doc.on('end', resolve);
+        });
+
+        // Создаем кнопки навигации
+        const navigationButtons = [];
+        if (chapterIndex > 0) {
+            navigationButtons.push(Markup.button.callback('⬅️ Предыдущая', `select_chapter_${titleId}_${chapterIndex - 1}`));
+        }
+        if (chapterIndex < chapters.length - 1) {
+            navigationButtons.push(Markup.button.callback('➡️ Следующая', `select_chapter_${titleId}_${chapterIndex + 1}`));
+        }
+
+        // Отправляем PDF с информацией о главе
+        const caption = `📚 *${title.name}*\n📖 Глава ${chapter.number}\n📅 ${chapter.createdAt ? new Date(chapter.createdAt).toLocaleDateString() : 'Дата неизвестна'}`;
+
+        await ctx.replyWithDocument(
+            { source: pdfPath, filename: `Глава_${chapter.number}.pdf` },
+            {
+                caption: caption,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [navigationButtons]
+                }
+            }
+        );
+
+        // Удаляем временный PDF файл
+        fs.unlinkSync(pdfPath);
+    } catch (error) {
+        console.error('Ошибка при выборе главы:', error);
+        await ctx.reply('Произошла ошибка при загрузке главы. Попробуйте позже.');
+    }
+}
+
+module.exports = { viewTitle, showChapters, selectChapter };

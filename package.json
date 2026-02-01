@@ -1,0 +1,30 @@
+{
+  "name": "tomilo-lib-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for notifying about new manga chapters",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "manga",
+    "chapters",
+    "notifications"
+  ],
+  "author": "Tomilo",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.13.4",
+    "dotenv": "^17.2.3",
+    "node-cron": "^4.2.1",
+    "pdfkit": "^0.17.2",
+    "telegraf": "^4.16.3",
+    "whatwg-url": "^15.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
+}
