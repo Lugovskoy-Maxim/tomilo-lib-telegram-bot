@@ -5,6 +5,7 @@ const { Markup } = require('telegraf');
 const { getCatalog } = require('../../services/api');
 
 async function showCatalog(ctx, page = 1) {
+    console.log(`[CATALOG] Showing catalog page ${page}`);
     try {
         const { titles, total, totalPages } = await getCatalog(page);
         
