@@ -46,11 +46,16 @@ async function showCatalog(ctx, page = 1) {
 }
 
 function setupCatalogCommand(bot) {
+    // Добавляем logging для отладки
+    console.log('[CATALOG] Setting up catalog handler');
+    
     bot.hears('📚 Каталог', async (ctx) => {
+        console.log('[CATALOG] Received "📚 Каталог" message:', ctx.message);
         await showCatalog(ctx, 1);
     });
     
     bot.command('catalog', async (ctx) => {
+        console.log('[CATALOG] Received /catalog command');
         await showCatalog(ctx, 1);
     });
 }

@@ -67,6 +67,14 @@ function setupSearchCommand(bot) {
     
     // Handle search input - only runs when waitingForSearch flag is set
     bot.on('text', async (ctx) => {
+        const waitingForSearch = ctx.session?.waitingForSearch;
+        console.log('[SEARCH] Text message received:', ctx.message?.text, '| waitingForSearch:', waitingForSearch);
+        
+        if (!waitingForSearch) {
+            console.log('[SEARCH] Ignoring text message - not waiting for search');
+            return;
+        }
+        
         await handleSearchInput(ctx, bot);
     });
 }

@@ -88,12 +88,17 @@ async function readFeedChapter(ctx, chapterId) {
 }
 
 function setupNavigationHandlers(bot) {
+    // Добавляем logging для отладки
+    console.log('[NAVIGATION] Setting up navigation handlers');
+    
     // Кнопка "Новые главы"
     bot.hears('🆕 Новые главы', async (ctx) => {
+        console.log('[NAVIGATION] Received "🆕 Новые главы" message:', ctx.message);
         await showNewChaptersFeed(ctx);
     });
 
     bot.command('new', async (ctx) => {
+        console.log('[NAVIGATION] Received /new command');
         await showNewChaptersFeed(ctx);
     });
 

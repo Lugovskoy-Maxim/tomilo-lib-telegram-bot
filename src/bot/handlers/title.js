@@ -51,7 +51,7 @@ async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
         }
 
         const buttonRows = [
-            [Markup.button.callback('Читать', `read_title_${titleId}`), Markup.button.callback('🔖 В закладки', `bookmark_${titleId}`)]
+            [Markup.button.callback('Выбрать главу', `read_title_${titleId}`), Markup.button.callback('🔖 Добавить в закладки', `bookmark_${titleId}`)]
         ];
 
         if (ctx.session && ctx.session.lastMessageId) {
