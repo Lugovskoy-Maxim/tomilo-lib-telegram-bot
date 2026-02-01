@@ -184,6 +184,8 @@ async function showChapters(ctx, titleId, page = 1) {
 
 // Функция для выбора главы и создания PDF
 async function selectChapter(ctx, titleId, chapterIndex) {
+  let pdfPath; // Объявляем переменную в начале функции
+  let chapterId; // Объявляем переменную для ID главы
   try {
     // Рассчитываем страницу и индекс на странице
     const limit = 50; // Количество глав на странице
@@ -206,7 +208,7 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     }
 
     const chapterSummary = chapters[indexOnPage];
-    const chapterId = chapterSummary._id;
+    chapterId = chapterSummary._id;
 
     // Получаем полную информацию о главе, включая страницы
     const chapterResponse = await axios.get(
@@ -228,12 +230,12 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     }
 
     // Отправляем сообщение о начале генерации PDF
-    const loadingMessage = await ctx.reply(
-      `📖 Глава ${chapter.number} формируется... Пожалуйста, подождите.`,
+    await ctx.reply(
+      `📖 Глава ${chapter.number || 'undefined'} формируется... Пожалуйста, подождите.`,
     );
 
     // Создаем PDF
-    const pdfPath = path.join(__dirname, `chapter_${chapter._id}.pdf`);
+    pdfPath = path.join(__dirname, `chapter_${chapter._id || chapterId || 'temp'}.pdf`);
     const doc = new PDFDocument();
     const writeStream = fs.createWriteStream(pdfPath);
 
@@ -307,11 +309,11 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     }
 
     // Отправляем PDF с информацией о главе
-    const caption = `📚 *${title.name}*\n📖 Глава ${chapter.number}\n📅 ${chapter.createdAt ? new Date(chapter.createdAt).toLocaleDateString() : "Дата неизвестна"}`;
+    const caption = `📚 *${title.name}*\n📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'}\n📅 ${chapter.createdAt ? new Date(chapter.createdAt).toLocaleDateString() : "Дата неизвестна"}`;
 
     try {
       await ctx.replyWithDocument(
-        { source: pdfPath, filename: `Глава_${chapter.number}.pdf` },
+        { source: pdfPath, filename: `Глава_${chapter.number || chapter.chapterNumber || 'undefined'}.pdf` },
         {
           caption: caption,
           parse_mode: "Markdown",
@@ -322,13 +324,17 @@ async function selectChapter(ctx, titleId, chapterIndex) {
       );
     } finally {
       // Удаляем временный PDF файл после отправки
-      fs.unlinkSync(pdfPath);
+      if (fs.existsSync(pdfPath)) {
+        fs.unlinkSync(pdfPath);
+      }
     }
   } catch (error) {
     // Ошибка при выборе главы
+    console.error('Ошибка при выборе главы:', error);
     await ctx.reply("Произошла ошибка при загрузке главы. Попробуйте позже.");
     // Удаляем временный файл при ошибке
-    if (fs.existsSync(pdfPath)) {
+    // pdfPath уже определен в области видимости функции
+    if (pdfPath && fs.existsSync(pdfPath)) {
       fs.unlinkSync(pdfPath);
     }
   }
