@@ -325,18 +325,30 @@ async function selectChapter(ctx, titleId, chapterIndex) {
 
     // Скачиваем и обрабатываем изображения
     const imagePaths = [];
+    let lastStatusText = "";
     for (let i = 0; i < images.length; i++) {
       const imageUrl = images[i];
 
       try {
-        // Обновляем статус каждые 5 изображений или для первого/последнего
-        if (i % 5 === 0 || i === images.length - 1) {
-          await ctx.telegram.editMessageText(
-            ctx.chat.id,
-            statusMessage.message_id,
-            null,
-            `📖 Глава ${chapter.number || chapter.chapterNumber || "N/A"} формируется...\nЗагружено изображений: ${i}/${images.length}`,
-          );
+        // Формируем текст статуса
+        const newStatusText = `📖 Глава ${chapter.number || chapter.chapterNumber || "N/A"} формируется...\nЗагружено изображений: ${successImages}/${images.length}`;
+
+        // Обновляем статус каждые 5 изображений или для первого/последнего, только если текст изменился
+        if ((i % 5 === 0 || i === images.length - 1) && newStatusText !== lastStatusText) {
+          try {
+            await ctx.telegram.editMessageText(
+              ctx.chat.id,
+              statusMessage.message_id,
+              null,
+              newStatusText,
+            );
+            lastStatusText = newStatusText;
+          } catch (editError) {
+            // Игнорируем ошибку "message is not modified"
+            if (!editError.message.includes("message is not modified")) {
+              console.error("Ошибка обновления статуса:", editError.message);
+            }
+          }
         }
 
         // Формируем полный URL для изображения страницы
