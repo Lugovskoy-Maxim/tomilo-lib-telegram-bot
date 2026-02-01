@@ -28,35 +28,46 @@ async function viewTitle(ctx, titleId, chapterPage = 1) {
     const totalChapters =
       countResponse.data.data?.count || countResponse.data.count || 0;
 
+    // Формируем URL тайтла на сайте
+    const baseURL = getBaseURL();
+    const titleSlug = title.slug || titleId;
+    const titleUrl = `${baseURL}/titles/${titleSlug}`;
+
+    // Формируем описание
+    let description = title.description || "Нет описания";
+    // Обрезаем слишком длинное описание
+    if (description.length > 500) {
+      description = description.substring(0, 500) + "...";
+    }
+
+    // Формируем подпись с информацией о тайтле
+    let caption = `📚 *${title.name}*\n`;
+    caption += `📅 Год: ${title.releaseYear || title.year || "N/A"}\n`;
+    caption += `📖 Статус: ${title.status || "N/A"}\n`;
+    caption += `📚 Глав: ${totalChapters || "N/A"}\n`;
+    caption += `📝 ${description}\n\n`;
+    caption += `[🌐 Читать на сайте](${titleUrl})`;
+
     // Проверяем, есть ли обложка у тайтла
     if (title.coverImage) {
       // Формируем полный URL для обложки
-      const baseURL = getBaseURL();
       let coverUrl;
       if (title.coverImage.startsWith("/uploads/")) {
-        // Путь уже содержит /uploads/, используем как есть
         coverUrl = `${baseURL}${title.coverImage}`;
       } else if (title.coverImage.startsWith("/")) {
-        // Путь начинается с /, но не содержит /uploads/
         coverUrl = `${baseURL}/uploads${title.coverImage}`;
       } else {
-        // Относительный путь
         coverUrl = `${baseURL}/uploads/${title.coverImage}`;
       }
 
       // Отправляем обложку с подписью
       await ctx.replyWithPhoto(coverUrl, {
-        caption: `📚 *${title.name}*\n📅 Год: ${title.releaseYear || title.year || "N/A"}\n📖 Статус: ${title.status || "N/A"}\n📚 Глав: ${totalChapters || "N/A"}\n📝 Описание: ${title.description || "Нет описания"}`,
+        caption: caption,
         parse_mode: "Markdown",
       });
     } else {
       // Если обложки нет, отправляем обычное текстовое сообщение
-      let message = `📚 *${title.name}*\n`;
-      message += `📅 Год: ${title.releaseYear || title.year || "N/A"}\n`;
-      message += `📖 Статус: ${title.status || "N/A"}\n`;
-      message += `📚 Глав: ${totalChapters || "N/A"}\n`;
-      message += `📝 Описание: ${title.description || "Нет описания"}\n\n`;
-      await ctx.reply(message, { parse_mode: "Markdown" });
+      await ctx.reply(caption, { parse_mode: "Markdown" });
     }
 
     // Добавляем кнопки для чтения и закладок
@@ -77,7 +88,7 @@ async function viewTitle(ctx, titleId, chapterPage = 1) {
       }
     }
 
-    const message = await ctx.reply("Главы:", {
+    const message = await ctx.reply("Выберите главу:", {
       reply_markup: {
         inline_keyboard: buttonRows,
       },
@@ -384,7 +395,7 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
         "Не удалось создать PDF. Вы можете прочитать главу на сайте:",
         {
           reply_markup: {
-            inline_keyboard: [[Markup.button.url("📖 Читать на сайте", chapterUrl)]],
+            inline_keyboard: [[Markup.button.url("📖 Читать на сайте TOMILO-LIB.RU", chapterUrl)]],
           },
         },
       );
@@ -435,12 +446,19 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
     const pdfBytes = await pdfDoc.save();
     await fs.writeFile(pdfPath, pdfBytes);
 
-    // Обновляем сообщение о статусе
+    // Обновляем сообщение о статусе с информацией о размере файла
+    const pdfSizeBytes = pdfBytes.length;
+    const pdfSizeKB = (pdfSizeBytes / 1024).toFixed(2);
+    const pdfSizeMB = (pdfSizeBytes / (1024 * 1024)).toFixed(2);
+    const sizeText = pdfSizeBytes > 1024 * 1024 
+      ? `${pdfSizeMB} МБ` 
+      : `${pdfSizeKB} КБ`;
+    
     await ctx.telegram.editMessageText(
       ctx.chat.id,
       statusMessage.message_id,
       null,
-      `✅ PDF создан успешно!\nДобавлено изображений: ${successImages}/${images.length}\nОтправка...`,
+      `✅ PDF создан успешно!\n📊 Размер: ${sizeText}\n📝 Отправка может занять несколько минут...`,
     );
 
     // Создаем кнопки навигации
@@ -456,8 +474,21 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
       );
     }
 
+    // Формируем дату создания главы
+    const createdDate = chapter.createdAt 
+      ? new Date(chapter.createdAt).toLocaleDateString("ru-RU", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric"
+        })
+      : "Дата неизвестна";
+
     // Отправляем PDF с информацией о главе
-    const caption = `📚 *${title.name}*\n📖 Глава ${chapter.number || chapter.chapterNumber || "N/A"}\n📅 ${chapter.createdAt ? new Date(chapter.createdAt).toLocaleDateString() : "Дата неизвестна"}\n✅ Изображений: ${successImages}/${images.length}`;
+    const caption = `📚 *${title.name}*\n` +
+      `📖 Глава ${chapter.number || chapter.chapterNumber || "N/A"}\n` +
+      `📅 ${createdDate}\n` +
+      `✅ Изображений: ${successImages}/${images.length}\n\n` +
+      `[🌐 Читать на сайте](${chapterUrl})`;
 
     // Отправляем PDF
     await ctx.replyWithDocument(
