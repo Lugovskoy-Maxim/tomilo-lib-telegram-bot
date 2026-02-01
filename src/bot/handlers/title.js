@@ -32,8 +32,8 @@ async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
         caption += `📖 Статус: ${title.status || 'N/A'}\n`;
         caption += `📚 Глав: ${totalChapters || 'N/A'}\n`;
         caption += `📝 ${description}\n\n`;
-        caption += `[🌐 Читай мангу, манхву и маньхуа на сайте TOMILO LIB ](https://tomilo-lib.ru)`;
-        caption += `[🌐 Читать ${title.name} на сайте](${titleUrl})`;
+        caption += `[🌐 Читай мангу, манхву и маньхуа на сайте TOMILO LIB ](https://tomilo-lib.ru)\n`;
+        caption += `[🌐 Читать ${title.name} на сайте](${titleUrl})\n`;
 
         if (title.coverImage) {
             let coverUrl;
