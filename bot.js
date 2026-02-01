@@ -54,6 +54,7 @@ bot.command('catalog', async (ctx) => {
 // Обработчик callback для навигации по каталогу
 bot.action(/catalog_page_(\d+)/, async (ctx) => {
     const page = parseInt(ctx.match[1]);
+    await ctx.deleteMessage(ctx.update.callback_query.message.message_id);
     await showCatalog(ctx, page);
 });
 
@@ -102,47 +103,64 @@ async function checkForNewChapters() {
             // Отправляем уведомление всем подписчикам
             for (const chatId of chatIds) {
                 try {
+                    // Получаем информацию о тайтле для получения slug
+                    let titleSlug = chapter.titleId?._id || chapter.titleId;
+                    if (chapter.title?.slug) {
+                        titleSlug = chapter.title.slug;
+                    } else if (chapter.titleId) {
+                        try {
+                            const titleResponse = await axios.get(`${API_BASE_URL}/titles/${chapter.titleId}`);
+                            const titleData = titleResponse.data.data || titleResponse.data;
+                            if (titleData?.slug) {
+                                titleSlug = titleData.slug;
+                            }
+                        } catch (titleError) {
+                            // Ошибка получения информации о тайтле
+                        }
+                    }
+                    
+                    const baseUrl = API_BASE_URL.replace('/api', '');
                     await bot.telegram.sendMessage(
                         chatId,
                         `Новая глава!\n\nНазвание: ${chapter.title?.name || 'Без названия'}\nНомер: ${chapter.number}\n${chapter.title?.description || ''}`,
                         Markup.inlineKeyboard([
-                            Markup.button.url('Читать', `https://tomilo-lib.ru/chapters/${chapter._id}`)
+                            Markup.button.url('Читать', `${baseUrl}/titles/${titleSlug}/chapter/${chapter._id}`)
                         ])
                     );
                 } catch (error) {
-                    console.error(`Ошибка отправки сообщения в чат ${chatId}:`, error);
+                    // Ошибка отправки сообщения в чат
                 }
             }
         }
     } catch (error) {
-        console.error('Ошибка при проверке новых глав:', error);
+        // Ошибка при проверке новых глав
     }
 }
 
 // Планировщик для регулярной проверки новых глав (каждые 30 минут)
 cron.schedule('*/30 * * * *', () => {
-    console.log('Проверка новых глав...');
+    // Проверка новых глав
     checkForNewChapters();
 });
 
 // Запуск бота
 bot.launch()
     .then(() => {
-        console.log('Бот запущен');
+        // Бот запущен
         // Отправляем сообщение о запуске в консоль
-        console.log('Бот успешно запущен и готов к работе!');
+        // Бот успешно запущен и готов к работе!
         // Отправляем сообщение в Telegram о запуске бота
         // (опционально, можно отправить сообщение администратору)
         // Проверяем новые главы при запуске
         checkForNewChapters();
     })
     .catch((error) => {
-        console.error('Ошибка запуска бота:', error);
+        // Ошибка запуска бота
     });
 
 // Обработка ошибок
 bot.catch((err, ctx) => {
-    console.error(`Ошибка для ${ctx.updateType}:`, err);
+    // Ошибка для типа обновления
 });
 
 // Graceful shutdown
@@ -150,3 +168,4 @@ process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 module.exports = bot;
+

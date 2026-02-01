@@ -10,7 +10,7 @@ async function showCatalog(ctx, page = 1) {
     try {
         // Запрашиваем тайтлы у API
         const response = await axios.get(`${API_BASE_URL}/titles?limit=${limit}&page=${page}&sort=createdAt:desc`);
-        console.log('Ответ от сервера при запросе каталога:', JSON.stringify(response.data, null, 2)); // Логирование ответа сервера
+        // Логирование ответа сервера при запросе каталога
         
         // Обрабатываем разные форматы ответа
         let titles = [];
@@ -34,7 +34,7 @@ async function showCatalog(ctx, page = 1) {
             totalPages = Math.ceil(total / limit);
         }
         
-        console.log(`Обработанные данные: titles.length=${titles.length}, total=${total}, totalPages=${totalPages}`);
+        // Обработанные данные: titles.length, total, totalPages
         
         if (!Array.isArray(titles) || titles.length === 0) {
             await ctx.reply('Каталог пуст.');
@@ -71,7 +71,7 @@ async function showCatalog(ctx, page = 1) {
             }
         });
     } catch (error) {
-        console.error('Ошибка получения каталога:', error);
+        // Ошибка получения каталога
         await ctx.reply('Произошла ошибка при получении каталога. Попробуйте позже.');
     }
 }
