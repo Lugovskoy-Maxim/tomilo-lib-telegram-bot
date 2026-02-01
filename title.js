@@ -106,7 +106,7 @@ async function showChapters(ctx, titleId, page = 1) {
 
     // Получаем общее количество глав для пагинации
     const countResponse = await axios.get(
-      `${API_BASE_URL}/chapters/count?title=${titleId}`,
+      `${API_BASE_URL}/titles/titles/${titleId}/chapters/count`,
     );
     const totalChapters =
       countResponse.data.data?.count ||
@@ -227,11 +227,24 @@ async function selectChapter(ctx, titleId, chapterIndex) {
       return;
     }
 
+    // Отправляем сообщение о начале генерации PDF
+    const loadingMessage = await ctx.reply(
+      `📖 Глава ${chapter.number} формируется... Пожалуйста, подождите.`,
+    );
+
     // Создаем PDF
     const pdfPath = path.join(__dirname, `chapter_${chapter._id}.pdf`);
     const doc = new PDFDocument();
+    const writeStream = fs.createWriteStream(pdfPath);
 
-    doc.pipe(fs.createWriteStream(pdfPath));
+    doc.pipe(writeStream);
+
+    // Параметры страницы PDF
+    const pageWidth = doc.page.width;
+    const pageHeight = doc.page.height;
+    const pageMargin = 20;
+    const maxWidth = pageWidth - pageMargin * 2;
+    const maxHeight = pageHeight - pageMargin * 2;
 
     for (const imageUrl of images) {
       try {
@@ -255,13 +268,12 @@ async function selectChapter(ctx, titleId, chapterIndex) {
         });
         const imageBuffer = Buffer.from(imageResponse.data, "binary");
 
-        // Добавляем изображение в PDF
-        doc
-          .addPage()
-          .image(imageBuffer, 0, 0, {
-            width: doc.page.width,
-            height: doc.page.height,
-          });
+        // Добавляем изображение в PDF с сохранением пропорций
+        doc.addPage().image(imageBuffer, pageMargin, pageMargin, {
+          fit: [maxWidth, maxHeight],
+          align: "center",
+          valign: "center",
+        });
       } catch (error) {
         // Ошибка загрузки
       }
@@ -270,8 +282,9 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     doc.end();
 
     // Ждем завершения создания PDF
-    await new Promise((resolve) => {
-      doc.on("end", resolve);
+    await new Promise((resolve, reject) => {
+      writeStream.on("finish", resolve);
+      writeStream.on("error", reject);
     });
 
     // Создаем кнопки навигации
@@ -312,6 +325,10 @@ async function selectChapter(ctx, titleId, chapterIndex) {
   } catch (error) {
     // Ошибка при выборе главы
     await ctx.reply("Произошла ошибка при загрузке главы. Попробуйте позже.");
+    // Удаляем временный файл при ошибке
+    if (fs.existsSync(pdfPath)) {
+      fs.unlinkSync(pdfPath);
+    }
   }
 }
 
