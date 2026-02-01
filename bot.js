@@ -159,6 +159,13 @@ cron.schedule('*/30 * * * *', () => {
 bot.launch()
     .then(() => {
         console.log('Бот успешно запущен и готов к работе!');
+        // Принудительно очищаем буфер вывода
+        if (process.stdout && typeof process.stdout.flush === 'function') {
+            process.stdout.flush();
+        }
+        // Альтернативный способ принудительной очистки буфера
+        process.stdout.write('');
+        
         // Отправляем сообщение о запуске (опционально)
         // Если у вас есть ID чата администратора, можно отправить сообщение:
         // bot.telegram.sendMessage(ADMIN_CHAT_ID, 'Бот запущен и готов к работе!');

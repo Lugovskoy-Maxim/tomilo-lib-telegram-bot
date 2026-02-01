@@ -5,7 +5,11 @@
   "main": "bot.js",
   "scripts": {
     "start": "node start.js",
-    "dev": "nodemon start.js"
+    "dev": "nodemon start.js",
+    "test-start": "node test-start.js",
+    "debug-start": "node debug-start.js",
+    "test-bot": "node test-bot.js",
+    "check-output": "node check-output.js"
   },
   "keywords": [
     "telegram",
