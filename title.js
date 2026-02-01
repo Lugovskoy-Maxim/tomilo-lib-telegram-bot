@@ -189,6 +189,7 @@ async function showChapters(ctx, titleId, page = 1) {
 async function selectChapter(ctx, titleId, chapterIndex) {
   let pdfPath; // Объявляем переменную в начале функции
   let chapterId; // Объявляем переменную для ID главы
+  let statusMessage; // Объявляем переменную для сообщения о статусе
   try {
     // Рассчитываем страницу и индекс на странице
     const limit = 50; // Количество глав на странице
@@ -234,9 +235,9 @@ async function selectChapter(ctx, titleId, chapterIndex) {
       return;
     }
 
-    // Отправляем сообщение о начале генерации PDF
-    await ctx.reply(
-      `📖 Глава ${chapter.number || 'undefined'} формируется... Пожалуйста, подождите. Это может занять несколько минут.`,
+    // Отправляем сообщение о начале генерации PDF с номером главы
+    statusMessage = await ctx.reply(
+      `📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'} формируется... Пожалуйста, подождите. Это может занять несколько минут.`,
     );
 
     // Создаем PDF
@@ -247,9 +248,19 @@ async function selectChapter(ctx, titleId, chapterIndex) {
 
     doc.pipe(writeStream);
 
-    // Обрабатываем каждое изображение
-    for (const imageUrl of images) {
+    // Обрабатываем каждое изображение с обновлением статуса
+    for (let i = 0; i < images.length; i++) {
+      const imageUrl = images[i];
       try {
+        // Обновляем сообщение о статусе с прогрессом
+        const progress = Math.round(((i + 1) / images.length) * 100);
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          statusMessage.message_id,
+          null,
+          `📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'} формируется... ${progress}%\nОбрабатывается изображение ${i + 1} из ${images.length}`,
+        );
+
         // Формируем полный URL для изображения страницы
         const baseURL = getBaseURL();
         let fullImageUrl;
@@ -296,6 +307,14 @@ async function selectChapter(ctx, titleId, chapterIndex) {
 
     doc.end();
 
+    // Обновляем сообщение о статусе на "Завершение создания PDF"
+    await ctx.telegram.editMessageText(
+      ctx.chat.id,
+      statusMessage.message_id,
+      null,
+      `📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'} формируется... 100%\nЗавершение создания PDF...`,
+    );
+
     // Ждем завершения создания PDF
     // Добавляем таймаут для завершения создания PDF
     await Promise.race([
@@ -307,6 +326,14 @@ async function selectChapter(ctx, titleId, chapterIndex) {
         setTimeout(() => reject(new Error("Таймаут при создании PDF")), 120000); // 2 минуты
       })
     ]);
+
+    // Обновляем сообщение о статусе на "Отправка PDF"
+    await ctx.telegram.editMessageText(
+      ctx.chat.id,
+      statusMessage.message_id,
+      null,
+      `📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'} формируется... 100%\nОтправка PDF...`,
+    );
 
     // Создаем кнопки навигации
     const navigationButtons = [];
@@ -346,9 +373,17 @@ async function selectChapter(ctx, titleId, chapterIndex) {
         setTimeout(() => reject(new Error("Таймаут при отправке PDF")), 300000); // 5 минут
       })
     ]);
+
+    // Удаляем сообщение о статусе после успешной отправки PDF
+    await ctx.deleteMessage(statusMessage.message_id);
   } catch (error) {
     // Ошибка при выборе главы
     console.error('Ошибка при выборе главы:', error);
+    
+    // Удаляем сообщение о статусе в случае ошибки
+    if (statusMessage) {
+      await ctx.deleteMessage(statusMessage.message_id);
+    }
     
     // Проверяем, является ли ошибка таймаутом при отправке PDF
     if (error.message === "Таймаут при отправке PDF") {
