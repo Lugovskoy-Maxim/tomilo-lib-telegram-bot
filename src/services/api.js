@@ -22,9 +22,27 @@ function getBaseURL() {
 /**
  * Поиск тайтлов
  */
-async function searchTitles(query, page = 1, limit = 10) {
+async function searchTitles(query, page = 1, limit = 20) {
+    console.log('Searching for:', query);
+    console.log('API URL:', API_BASE_URL + `/titles?search=${encodeURIComponent(query)}&limit=${limit}&page=${page}`);
+    
     const response = await apiClient.get(`/titles?search=${encodeURIComponent(query)}&limit=${limit}&page=${page}`);
-    return response.data.data || response.data;
+    
+    console.log('API response status:', response.status);
+    console.log('API response data:', JSON.stringify(response.data).substring(0, 500));
+    
+    // Handle different response structures
+    if (response.data.data && Array.isArray(response.data.data)) {
+        return response.data.data;
+    } else if (response.data.data && response.data.data.titles) {
+        return response.data.data.titles;
+    } else if (Array.isArray(response.data.data)) {
+        return response.data.data;
+    } else if (Array.isArray(response.data)) {
+        return response.data;
+    }
+    
+    return [];
 }
 
 /**
