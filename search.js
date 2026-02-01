@@ -13,7 +13,7 @@ async function searchTitles(ctx, bot) {
         try {
             // Запрашиваем тайтлы у API
             const response = await axios.get(`${API_BASE_URL}/titles?search=${encodeURIComponent(query)}&limit=10`);
-            // Логирование ответа сервера при поиске тайтлов
+            // Обрабатываем разные форматы ответа
             const titles = response.data.data || response.data; // Обрабатываем разные форматы ответа
             
             // Проверяем, что titles - это массив
@@ -35,7 +35,7 @@ async function searchTitles(ctx, bot) {
             
             await ctx.reply('Результаты поиска:', Markup.inlineKeyboard(buttonRows));
         } catch (error) {
-            // Ошибка поиска тайтлов
+            // Ошибка поиска
             await ctx.reply('Произошла ошибка при поиске тайтлов. Попробуйте позже.');
         }
     };

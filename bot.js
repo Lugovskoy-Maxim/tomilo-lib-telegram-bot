@@ -86,6 +86,13 @@ bot.action(/select_chapter_(.+)_(\d+)/, async (ctx) => {
     await selectChapter(ctx, titleId, chapterIndex);
 });
 
+// Обработчик callback для навигации по страницам глав
+bot.action(/chapters_page_(.+)_(\d+)/, async (ctx) => {
+    const titleId = ctx.match[1];
+    const page = parseInt(ctx.match[2]);
+    await showChapters(ctx, titleId, page);
+});
+
 // Функция для проверки новых глав
 async function checkForNewChapters() {
     try {
@@ -103,7 +110,7 @@ async function checkForNewChapters() {
             // Отправляем уведомление всем подписчикам
             for (const chatId of chatIds) {
                 try {
-                    // Получаем информацию о тайтле для получения slug
+                    // Получаем информацию о тайтле
                     let titleSlug = chapter.titleId?._id || chapter.titleId;
                     if (chapter.title?.slug) {
                         titleSlug = chapter.title.slug;
@@ -115,7 +122,7 @@ async function checkForNewChapters() {
                                 titleSlug = titleData.slug;
                             }
                         } catch (titleError) {
-                            // Ошибка получения информации о тайтле
+                            // Ошибка получения информации
                         }
                     }
                     
@@ -128,12 +135,12 @@ async function checkForNewChapters() {
                         ])
                     );
                 } catch (error) {
-                    // Ошибка отправки сообщения в чат
+                    // Ошибка отправки сообщения
                 }
             }
         }
     } catch (error) {
-        // Ошибка при проверке новых глав
+        // Ошибка при проверке
     }
 }
 
@@ -147,7 +154,7 @@ cron.schedule('*/30 * * * *', () => {
 bot.launch()
     .then(() => {
         // Бот запущен
-        // Отправляем сообщение о запуске в консоль
+        // Отправляем сообщение о запуске
         // Бот успешно запущен и готов к работе!
         // Отправляем сообщение в Telegram о запуске бота
         // (опционально, можно отправить сообщение администратору)
@@ -155,12 +162,12 @@ bot.launch()
         checkForNewChapters();
     })
     .catch((error) => {
-        // Ошибка запуска бота
+        // Ошибка запуска
     });
 
 // Обработка ошибок
 bot.catch((err, ctx) => {
-    // Ошибка для типа обновления
+    // Ошибка обновления
 });
 
 // Graceful shutdown

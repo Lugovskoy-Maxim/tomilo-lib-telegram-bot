@@ -10,7 +10,7 @@ async function showCatalog(ctx, page = 1) {
     try {
         // Запрашиваем тайтлы у API
         const response = await axios.get(`${API_BASE_URL}/titles?limit=${limit}&page=${page}&sort=createdAt:desc`);
-        // Логирование ответа сервера при запросе каталога
+        // Обрабатываем разные форматы ответа
         
         // Обрабатываем разные форматы ответа
         let titles = [];
@@ -34,7 +34,7 @@ async function showCatalog(ctx, page = 1) {
             totalPages = Math.ceil(total / limit);
         }
         
-        // Обработанные данные: titles.length, total, totalPages
+        // Проверяем, что titles - это массив
         
         if (!Array.isArray(titles) || titles.length === 0) {
             await ctx.reply('Каталог пуст.');
