@@ -106,7 +106,7 @@ async function showChapters(ctx, titleId, page = 1) {
 
     // Получаем общее количество глав для пагинации
     const countResponse = await axios.get(
-      `${API_BASE_URL}/titles/titles/${titleId}/chapters/count`,
+      `${API_BASE_URL}/titles/${titleId}/chapters/count`,
     );
     const totalChapters =
       countResponse.data.data?.count ||
@@ -309,19 +309,21 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     // Отправляем PDF с информацией о главе
     const caption = `📚 *${title.name}*\n📖 Глава ${chapter.number}\n📅 ${chapter.createdAt ? new Date(chapter.createdAt).toLocaleDateString() : "Дата неизвестна"}`;
 
-    await ctx.replyWithDocument(
-      { source: pdfPath, filename: `Глава_${chapter.number}.pdf` },
-      {
-        caption: caption,
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [navigationButtons],
+    try {
+      await ctx.replyWithDocument(
+        { source: pdfPath, filename: `Глава_${chapter.number}.pdf` },
+        {
+          caption: caption,
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [navigationButtons],
+          },
         },
-      },
-    );
-
-    // Удаляем временный PDF файл
-    fs.unlinkSync(pdfPath);
+      );
+    } finally {
+      // Удаляем временный PDF файл после отправки
+      fs.unlinkSync(pdfPath);
+    }
   } catch (error) {
     // Ошибка при выборе главы
     await ctx.reply("Произошла ошибка при загрузке главы. Попробуйте позже.");
