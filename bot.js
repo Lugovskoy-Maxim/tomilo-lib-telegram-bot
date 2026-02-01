@@ -97,7 +97,7 @@ bot.action(/chapters_page_(.+)_(\d+)/, async (ctx) => {
 async function checkForNewChapters() {
     try {
         // Получаем список последних глав из API
-        const response = await axios.get(`${API_BASE_URL}/chapters?limit=5&sort=createdAt:desc`);
+        const response = await axios.get(`${API_BASE_URL}/chapters?limit=5&sort=createdAt:desc`, { timeout: 15000 });
         const chaptersData = response.data.data || response.data;
         const chapters = Array.isArray(chaptersData) ? chaptersData : (chaptersData.chapters || []);
         
@@ -116,7 +116,7 @@ async function checkForNewChapters() {
                         titleSlug = chapter.title.slug;
                     } else if (chapter.titleId) {
                         try {
-                            const titleResponse = await axios.get(`${API_BASE_URL}/titles/${chapter.titleId}`);
+                            const titleResponse = await axios.get(`${API_BASE_URL}/titles/${chapter.titleId}`, { timeout: 10000 });
                             const titleData = titleResponse.data.data || titleResponse.data;
                             if (titleData?.slug) {
                                 titleSlug = titleData.slug;
@@ -130,9 +130,12 @@ async function checkForNewChapters() {
                     await bot.telegram.sendMessage(
                         chatId,
                         `Новая глава!\n\nНазвание: ${chapter.title?.name || 'Без названия'}\nНомер: ${chapter.number}\n${chapter.title?.description || ''}`,
-                        Markup.inlineKeyboard([
-                            Markup.button.url('Читать', `${baseUrl}/titles/${titleSlug}/chapter/${chapter._id}`)
-                        ])
+                        {
+                            reply_markup: Markup.inlineKeyboard([
+                                Markup.button.url('Читать', `${baseUrl}/titles/${titleSlug}/chapter/${chapter._id}`)
+                            ]),
+                            // Добавляем таймаут для отправки сообщения
+                        }
                     );
                 } catch (error) {
                     console.error('Ошибка отправки сообщения:', error);
@@ -147,7 +150,9 @@ async function checkForNewChapters() {
 // Планировщик для регулярной проверки новых глав (каждые 30 минут)
 cron.schedule('*/30 * * * *', () => {
     // Проверка новых глав
-    checkForNewChapters();
+    checkForNewChapters().catch(error => {
+        console.error('Ошибка при проверке новых глав по расписанию:', error);
+    });
 });
 
 // Запуск бота
@@ -159,7 +164,11 @@ bot.launch()
         // bot.telegram.sendMessage(ADMIN_CHAT_ID, 'Бот запущен и готов к работе!');
         
         // Проверяем новые главы при запуске
-        checkForNewChapters();
+        setTimeout(() => {
+            checkForNewChapters().catch(error => {
+                console.error('Ошибка при проверке новых глав при запуске:', error);
+            });
+        }, 5000); // Задержка 5 секунд для инициализации
     })
     .catch((error) => {
         console.error('Ошибка запуска бота:', error);

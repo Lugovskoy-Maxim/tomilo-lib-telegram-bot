@@ -14,12 +14,13 @@ const getBaseURL = () => {
 async function viewTitle(ctx, titleId, chapterPage = 1) {
   try {
     // Получаем информацию о тайтле
-    const titleResponse = await axios.get(`${API_BASE_URL}/titles/${titleId}`);
+    const titleResponse = await axios.get(`${API_BASE_URL}/titles/${titleId}`, { timeout: 10000 });
     const title = titleResponse.data.data || titleResponse.data;
 
     // Получаем общее количество глав
     const countResponse = await axios.get(
       `${API_BASE_URL}/titles/${titleId}/chapters/count`,
+      { timeout: 10000 }
     );
     const totalChapters =
       countResponse.data.data?.count || countResponse.data.count || 0;
@@ -98,6 +99,7 @@ async function showChapters(ctx, titleId, page = 1) {
     const offset = (page - 1) * limit;
     const chaptersResponse = await axios.get(
       `${API_BASE_URL}/chapters/title/${titleId}?sort=number:desc&limit=${limit}&offset=${offset}`,
+      { timeout: 15000 }
     );
     const chaptersData = chaptersResponse.data.data || chaptersResponse.data;
     const chapters = Array.isArray(chaptersData)
@@ -107,6 +109,7 @@ async function showChapters(ctx, titleId, page = 1) {
     // Получаем общее количество глав для пагинации
     const countResponse = await axios.get(
       `${API_BASE_URL}/titles/${titleId}/chapters/count`,
+      { timeout: 10000 }
     );
     const totalChapters =
       countResponse.data.data?.count ||
@@ -196,6 +199,7 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     const offset = (page - 1) * limit;
     const chaptersResponse = await axios.get(
       `${API_BASE_URL}/chapters/title/${titleId}?sort=number:desc&limit=${limit}&offset=${offset}`,
+      { timeout: 15000 }
     );
     const chaptersData = chaptersResponse.data.data || chaptersResponse.data;
     const chapters = Array.isArray(chaptersData)
@@ -213,11 +217,12 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     // Получаем полную информацию о главе, включая страницы
     const chapterResponse = await axios.get(
       `${API_BASE_URL}/chapters/${chapterId}`,
+      { timeout: 15000 }
     );
     const chapter = chapterResponse.data.data || chapterResponse.data;
 
     // Получаем информацию о тайтле
-    const titleResponse = await axios.get(`${API_BASE_URL}/titles/${titleId}`);
+    const titleResponse = await axios.get(`${API_BASE_URL}/titles/${titleId}`, { timeout: 10000 });
     const title = titleResponse.data.data || titleResponse.data;
 
     // Изображения из полной информации о главе
@@ -231,23 +236,18 @@ async function selectChapter(ctx, titleId, chapterIndex) {
 
     // Отправляем сообщение о начале генерации PDF
     await ctx.reply(
-      `📖 Глава ${chapter.number || 'undefined'} формируется... Пожалуйста, подождите.`,
+      `📖 Глава ${chapter.number || 'undefined'} формируется... Пожалуйста, подождите. Это может занять несколько минут.`,
     );
 
     // Создаем PDF
     pdfPath = path.join(__dirname, `chapter_${chapter._id || chapterId || 'temp'}.pdf`);
-    const doc = new PDFDocument();
+    // Инициализируем PDF без автоматического создания первой страницы
+    const doc = new PDFDocument({ autoFirstPage: false });
     const writeStream = fs.createWriteStream(pdfPath);
 
     doc.pipe(writeStream);
 
-    // Параметры страницы PDF
-    const pageWidth = doc.page.width;
-    const pageHeight = doc.page.height;
-    const pageMargin = 20;
-    const maxWidth = pageWidth - pageMargin * 2;
-    const maxHeight = pageHeight - pageMargin * 2;
-
+    // Обрабатываем каждое изображение
     for (const imageUrl of images) {
       try {
         // Формируем полный URL для изображения страницы
@@ -264,30 +264,49 @@ async function selectChapter(ctx, titleId, chapterIndex) {
           fullImageUrl = `${baseURL}/uploads/${imageUrl}`;
         }
 
-        // Отображаем путь изображения для отладки
+        // Получаем изображение
         const imageResponse = await axios.get(fullImageUrl, {
           responseType: "arraybuffer",
+          timeout: 60000 // 60 seconds for image download
         });
         const imageBuffer = Buffer.from(imageResponse.data, "binary");
 
-        // Добавляем изображение в PDF с сохранением пропорций
-        doc.addPage().image(imageBuffer, pageMargin, pageMargin, {
-          fit: [maxWidth, maxHeight],
-          align: "center",
-          valign: "center",
+        // Открываем изображение для получения размеров
+        const imageObj = doc.openImage(imageBuffer);
+        const imageWidth = imageObj.width;
+        const imageHeight = imageObj.height;
+        
+        // Создаем новую страницу с размерами изображения и добавляем изображение
+        doc.addPage({
+          margin: 0,
+          size: [imageWidth, imageHeight]
+        }).image(imageBuffer, 0, 0, {
+          width: imageWidth,
+          height: imageHeight
         });
       } catch (error) {
-        // Ошибка загрузки
+        console.error('Ошибка при обработке изображения:', error);
+        // Добавляем пустую страницу в случае ошибки
+        doc.addPage({
+          margin: 0,
+          size: [612, 792] // Стандартный размер A4
+        });
       }
     }
 
     doc.end();
 
     // Ждем завершения создания PDF
-    await new Promise((resolve, reject) => {
-      writeStream.on("finish", resolve);
-      writeStream.on("error", reject);
-    });
+    // Добавляем таймаут для завершения создания PDF
+    await Promise.race([
+      new Promise((resolve, reject) => {
+        writeStream.on("finish", resolve);
+        writeStream.on("error", reject);
+      }),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("Таймаут при создании PDF")), 120000); // 2 минуты
+      })
+    ]);
 
     // Создаем кнопки навигации
     const navigationButtons = [];
@@ -311,8 +330,9 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     // Отправляем PDF с информацией о главе
     const caption = `📚 *${title.name}*\n📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'}\n📅 ${chapter.createdAt ? new Date(chapter.createdAt).toLocaleDateString() : "Дата неизвестна"}`;
 
-    try {
-      await ctx.replyWithDocument(
+    // Добавляем таймаут для отправки документа (увеличено до 5 минут)
+    await Promise.race([
+      ctx.replyWithDocument(
         { source: pdfPath, filename: `Глава_${chapter.number || chapter.chapterNumber || 'undefined'}.pdf` },
         {
           caption: caption,
@@ -321,19 +341,23 @@ async function selectChapter(ctx, titleId, chapterIndex) {
             inline_keyboard: [navigationButtons],
           },
         },
-      );
-    } finally {
-      // Удаляем временный PDF файл после отправки
-      if (fs.existsSync(pdfPath)) {
-        fs.unlinkSync(pdfPath);
-      }
-    }
+      ),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("Таймаут при отправке PDF")), 300000); // 5 минут
+      })
+    ]);
   } catch (error) {
     // Ошибка при выборе главы
     console.error('Ошибка при выборе главы:', error);
-    await ctx.reply("Произошла ошибка при загрузке главы. Попробуйте позже.");
-    // Удаляем временный файл при ошибке
-    // pdfPath уже определен в области видимости функции
+    
+    // Проверяем, является ли ошибка таймаутом при отправке PDF
+    if (error.message === "Таймаут при отправке PDF") {
+      await ctx.reply("Извините, отправка PDF заняла слишком много времени. Пожалуйста, попробуйте еще раз.");
+    } else {
+      await ctx.reply("Произошла ошибка при загрузке главы. Попробуйте позже.");
+    }
+  } finally {
+    // Удаляем временный PDF файл после отправки
     if (pdfPath && fs.existsSync(pdfPath)) {
       fs.unlinkSync(pdfPath);
     }

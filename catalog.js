@@ -9,7 +9,7 @@ async function showCatalog(ctx, page = 1) {
     
     try {
         // Запрашиваем тайтлы у API
-        const response = await axios.get(`${API_BASE_URL}/titles?limit=${limit}&page=${page}&sort=createdAt:desc`);
+        const response = await axios.get(`${API_BASE_URL}/titles?limit=${limit}&page=${page}&sort=createdAt:desc`, { timeout: 10000 });
         // Обрабатываем разные форматы ответа
         
         // Обрабатываем разные форматы ответа

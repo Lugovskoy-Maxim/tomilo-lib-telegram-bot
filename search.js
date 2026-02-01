@@ -12,7 +12,7 @@ async function searchTitles(ctx, bot) {
         
         try {
             // Запрашиваем тайтлы у API
-            const response = await axios.get(`${API_BASE_URL}/titles?search=${encodeURIComponent(query)}&limit=10`);
+            const response = await axios.get(`${API_BASE_URL}/titles?search=${encodeURIComponent(query)}&limit=10`, { timeout: 10000 });
             // Обрабатываем разные форматы ответа
             const titles = response.data.data || response.data; // Обрабатываем разные форматы ответа
             
