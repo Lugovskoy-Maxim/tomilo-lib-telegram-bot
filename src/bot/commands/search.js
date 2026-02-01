@@ -66,12 +66,17 @@ function setupSearchCommand(bot) {
     });
     
     // Handle search input - only runs when waitingForSearch flag is set
-    bot.on('text', async (ctx) => {
-        const waitingForSearch = ctx.session?.waitingForSearch;
-        console.log('[SEARCH] Text message received:', ctx.message?.text, '| waitingForSearch:', waitingForSearch);
+    // Using hears() instead of on('text') to avoid intercepting all messages
+    // This allows bot.hears() for keyboard buttons to work properly
+    bot.hears(/^(?![\/])/, async (ctx) => {
+        if (!ctx.session || !ctx.session.waitingForSearch) {
+            return;
+        }
         
-        if (!waitingForSearch) {
-            console.log('[SEARCH] Ignoring text message - not waiting for search');
+        // Skip if this is a command or keyboard button
+        const text = ctx.message?.text;
+        const keyboardButtons = ['🔍 Поиск тайтлов', '📚 Каталог', '🆕 Новые главы', '📖 Мои тайтлы', 'ℹ️ Помощь'];
+        if (text?.startsWith('/') || keyboardButtons.includes(text)) {
             return;
         }
         
