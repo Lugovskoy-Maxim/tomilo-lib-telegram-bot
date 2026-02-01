@@ -1,6 +1,6 @@
 const { Markup } = require("telegraf");
 const axios = require("axios");
-const PDFDocument = require("pdfkit");
+const { PDFDocument } = require("pdf-lib");
 const fs = require("fs");
 const path = require("path");
 const { API_BASE_URL } = require("./config");
@@ -242,11 +242,9 @@ async function selectChapter(ctx, titleId, chapterIndex) {
 
     // Создаем PDF
     pdfPath = path.join(__dirname, `chapter_${chapter._id || chapterId || 'temp'}.pdf`);
-    // Инициализируем PDF без автоматического создания первой страницы
-    const doc = new PDFDocument({ autoFirstPage: false });
-    const writeStream = fs.createWriteStream(pdfPath);
-
-    doc.pipe(writeStream);
+    
+    // Инициализируем PDF документ
+    const pdfDoc = await PDFDocument.create();
 
     // Обрабатываем каждое изображение с обновлением статуса
     for (let i = 0; i < images.length; i++) {
@@ -254,6 +252,8 @@ async function selectChapter(ctx, titleId, chapterIndex) {
       try {
         // Обновляем сообщение о статусе с прогрессом
         const progress = Math.round(((i + 1) / images.length) * 100);
+        // Добавляем задержку перед обновлением сообщения, чтобы избежать превышения лимита запросов
+        await new Promise(resolve => setTimeout(resolve, 1000));
         await ctx.telegram.editMessageText(
           ctx.chat.id,
           statusMessage.message_id,
@@ -276,64 +276,89 @@ async function selectChapter(ctx, titleId, chapterIndex) {
         }
 
         // Получаем изображение
-        const imageResponse = await axios.get(fullImageUrl, {
-          responseType: "arraybuffer",
-          timeout: 60000 // 60 seconds for image download
-        });
-        const imageBuffer = Buffer.from(imageResponse.data, "binary");
+        let imageBytes;
+        try {
+          const imageResponse = await axios.get(fullImageUrl, {
+            responseType: "arraybuffer",
+            timeout: 60000 // 60 seconds for image download
+          });
+          imageBytes = imageResponse.data;
+        } catch (error) {
+          console.error(`Error downloading image ${i + 1} from ${fullImageUrl}:`, error.message);
+          // Пропускаем изображение, если не удалось его загрузить
+          continue;
+        }
 
-        // Открываем изображение для получения размеров
-        const imageObj = doc.openImage(imageBuffer);
-        const imageWidth = imageObj.width;
-        const imageHeight = imageObj.height;
+        // Определяем тип изображения и встраиваем его в PDF
+        let imageEmbed;
+        if (imageUrl.toLowerCase().endsWith('.png')) {
+          imageEmbed = await pdfDoc.embedPng(imageBytes);
+        } else if (imageUrl.toLowerCase().endsWith('.jpg') || imageUrl.toLowerCase().endsWith('.jpeg')) {
+          imageEmbed = await pdfDoc.embedJpg(imageBytes);
+        } else if (imageUrl.toLowerCase().endsWith('.webp')) {
+          // Для WebP конвертируем в PNG
+          const { default: sharp } = await import('sharp');
+          const pngBuffer = await sharp(imageBytes).png().toBuffer();
+          imageEmbed = await pdfDoc.embedPng(pngBuffer);
+        } else {
+          // Пытаемся определить тип автоматически
+          try {
+            imageEmbed = await pdfDoc.embedPng(imageBytes);
+          } catch (e) {
+            try {
+              imageEmbed = await pdfDoc.embedJpg(imageBytes);
+            } catch (e2) {
+              // Пытаемся конвертировать в PNG
+              try {
+                const { default: sharp } = await import('sharp');
+                const pngBuffer = await sharp(imageBytes).png().toBuffer();
+                imageEmbed = await pdfDoc.embedPng(pngBuffer);
+              } catch (e3) {
+                console.error(`Failed to embed image ${i + 1}`);
+                continue;
+              }
+            }
+          }
+        }
         
-        // Создаем новую страницу с размерами изображения и добавляем изображение
-        doc.addPage({
-          margin: 0,
-          size: [imageWidth, imageHeight]
-        }).image(imageBuffer, 0, 0, {
-          width: imageWidth,
-          height: imageHeight
+        // Создаем новую страницу с размерами изображения
+        const page = pdfDoc.addPage([imageEmbed.width, imageEmbed.height]);
+        
+        // Рисуем изображение на странице
+        page.drawImage(imageEmbed, {
+          x: 0,
+          y: 0,
+          width: imageEmbed.width,
+          height: imageEmbed.height,
         });
       } catch (error) {
-        console.error('Ошибка при обработке изображения:', error);
-        // Добавляем пустую страницу в случае ошибки
-        doc.addPage({
-          margin: 0,
-          size: [612, 792] // Стандартный размер A4
-        });
+        console.error(`Error processing image ${i + 1}:`, error);
       }
     }
 
-    doc.end();
+    // Сохраняем PDF
+    const pdfBytes = await pdfDoc.save();
+    fs.writeFileSync(pdfPath, pdfBytes);
 
-    // Обновляем сообщение о статусе на "Завершение создания PDF"
-    await ctx.telegram.editMessageText(
-      ctx.chat.id,
-      statusMessage.message_id,
-      null,
-      `📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'} формируется... 100%\nЗавершение создания PDF...`,
-    );
-
-    // Ждем завершения создания PDF
-    // Добавляем таймаут для завершения создания PDF
-    await Promise.race([
-      new Promise((resolve, reject) => {
-        writeStream.on("finish", resolve);
-        writeStream.on("error", reject);
-      }),
-      new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Таймаут при создании PDF")), 120000); // 2 минуты
-      })
-    ]);
+    console.log('PDF creation completed, proceeding to send');
 
     // Обновляем сообщение о статусе на "Отправка PDF"
-    await ctx.telegram.editMessageText(
-      ctx.chat.id,
-      statusMessage.message_id,
-      null,
-      `📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'} формируется... 100%\nОтправка PDF...`,
-    );
+    try {
+      console.log('Updating status message to "Отправка PDF"');
+      // Добавляем проверку существования сообщения перед обновлением
+      if (statusMessage && statusMessage.message_id) {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          statusMessage.message_id,
+          null,
+          `📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'} формируется... 100%\nОтправка PDF...`,
+        );
+        console.log('Status message updated to "Отправка PDF"');
+      }
+    } catch (editError) {
+      // Игнорируем ошибки редактирования сообщения
+      console.error('Ошибка при обновлении сообщения о статусе:', editError);
+    }
 
     // Создаем кнопки навигации
     const navigationButtons = [];
@@ -357,36 +382,78 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     // Отправляем PDF с информацией о главе
     const caption = `📚 *${title.name}*\n📖 Глава ${chapter.number || chapter.chapterNumber || 'undefined'}\n📅 ${chapter.createdAt ? new Date(chapter.createdAt).toLocaleDateString() : "Дата неизвестна"}`;
 
-    // Добавляем таймаут для отправки документа (увеличено до 5 минут)
-    await Promise.race([
-      ctx.replyWithDocument(
-        { source: pdfPath, filename: `Глава_${chapter.number || chapter.chapterNumber || 'undefined'}.pdf` },
-        {
-          caption: caption,
-          parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [navigationButtons],
-          },
-        },
-      ),
-      new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Таймаут при отправке PDF")), 300000); // 5 минут
-      })
-    ]);
+    try {
+      // Проверяем существование файла перед отправкой
+      if (!fs.existsSync(pdfPath)) {
+        throw new Error("PDF файл не найден");
+      }
+      
+      // Отправляем PDF с увеличенным таймаутом
+      // Увеличиваем таймаут до 10 минут для отправки больших файлов
+      console.log('Sending PDF to user');
+      // Увеличиваем таймаут для отправки больших файлов
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Timeout while sending PDF'));
+        }, 300000); // 5 минут таймаут
+        
+        ctx.replyWithDocument(
+          { source: pdfPath, filename: `Глава_${chapter.number || chapter.chapterNumber || 'undefined'}.pdf` },
+          {
+            caption: caption,
+            parse_mode: "Markdown",
+            reply_markup: {
+              inline_keyboard: [navigationButtons],
+            },
+          }
+        ).then(() => {
+          clearTimeout(timeout);
+          resolve();
+        }).catch((error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+      });
+      console.log('PDF sent successfully');
+    } catch (sendError) {
+      console.error('Ошибка при отправке PDF:', sendError);
+      // Проверяем, является ли ошибка таймаутом
+      if (sendError.code === 'ETIMEDOUT' || sendError.message.includes('timeout')) {
+        throw new Error("Таймаут при отправке PDF");
+      }
+      throw new Error("Ошибка при отправке PDF");
+    }
 
     // Удаляем сообщение о статусе после успешной отправки PDF
-    await ctx.deleteMessage(statusMessage.message_id);
+    try {
+      console.log('Deleting status message');
+      // Добавляем проверку существования сообщения перед удалением
+      if (statusMessage && statusMessage.message_id) {
+        await ctx.deleteMessage(statusMessage.message_id);
+        console.log('Status message deleted');
+      }
+    } catch (deleteError) {
+      // Игнорируем ошибки удаления сообщения
+      console.error('Ошибка при удалении сообщения о статусе:', deleteError);
+    }
   } catch (error) {
     // Ошибка при выборе главы
     console.error('Ошибка при выборе главы:', error);
     
     // Удаляем сообщение о статусе в случае ошибки
     if (statusMessage) {
-      await ctx.deleteMessage(statusMessage.message_id);
+      try {
+        await ctx.deleteMessage(statusMessage.message_id);
+      } catch (deleteError) {
+        // Игнорируем ошибки удаления сообщения
+        console.error('Ошибка при удалении сообщения о статусе:', deleteError);
+      }
     }
     
-    // Проверяем, является ли ошибка таймаутом при отправке PDF
-    if (error.message === "Таймаут при отправке PDF") {
+    // Отправляем сообщение об ошибке пользователю
+    if (error.message === "Ошибка при создании PDF" || error.message === "Таймаут при создании PDF") {
+      await ctx.reply("Извините, произошла ошибка при создании PDF. Пожалуйста, попробуйте еще раз.");
+    } else if (error.message === "Ошибка при отправке PDF" || error.message === "Таймаут при отправке PDF") {
       await ctx.reply("Извините, отправка PDF заняла слишком много времени. Пожалуйста, попробуйте еще раз.");
     } else {
       await ctx.reply("Произошла ошибка при загрузке главы. Попробуйте позже.");
@@ -394,7 +461,11 @@ async function selectChapter(ctx, titleId, chapterIndex) {
   } finally {
     // Удаляем временный PDF файл после отправки
     if (pdfPath && fs.existsSync(pdfPath)) {
-      fs.unlinkSync(pdfPath);
+      try {
+        fs.unlinkSync(pdfPath);
+      } catch (unlinkError) {
+        console.error('Ошибка при удалении временного PDF файла:', unlinkError);
+      }
     }
   }
 }
