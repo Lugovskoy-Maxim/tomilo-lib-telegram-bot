@@ -54,7 +54,10 @@ bot.command('catalog', async (ctx) => {
 // Обработчик callback для навигации по каталогу
 bot.action(/catalog_page_(\d+)/, async (ctx) => {
     const page = parseInt(ctx.match[1]);
-    await ctx.deleteMessage(ctx.update.callback_query.message.message_id);
+    try {
+        await ctx.answerCbQuery();
+        await ctx.deleteMessage(ctx.update.callback_query.message.message_id);
+    } catch (e) {}
     await showCatalog(ctx, page);
 });
 
@@ -76,6 +79,9 @@ bot.action(/view_title_(.+)/, async (ctx) => {
 // Обработчик callback для кнопки "Читать"
 bot.action(/read_title_(.+)/, async (ctx) => {
     const titleId = ctx.match[1];
+    try {
+        await ctx.answerCbQuery();
+    } catch (e) {}
     await showChapters(ctx, titleId);
 });
 
@@ -83,6 +89,9 @@ bot.action(/read_title_(.+)/, async (ctx) => {
 bot.action(/select_chapter_(.+)_(\d+)/, async (ctx) => {
     const titleId = ctx.match[1];
     const chapterIndex = parseInt(ctx.match[2]);
+    try {
+        await ctx.answerCbQuery();
+    } catch (e) {}
     await selectChapter(ctx, titleId, chapterIndex);
 });
 
@@ -90,6 +99,13 @@ bot.action(/select_chapter_(.+)_(\d+)/, async (ctx) => {
 bot.action(/chapters_page_(.+)_(\d+)/, async (ctx) => {
     const titleId = ctx.match[1];
     const page = parseInt(ctx.match[2]);
+    try {
+        await ctx.answerCbQuery();
+        // Удаляем предыдущее сообщение со списком глав
+        await ctx.deleteMessage(ctx.update.callback_query.message.message_id);
+    } catch (e) {
+        // Игнорируем ошибки (например, если сообщение уже удалено)
+    }
     await showChapters(ctx, titleId, page);
 });
 
@@ -192,4 +208,3 @@ process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 module.exports = bot;
-
