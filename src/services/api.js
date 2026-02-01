@@ -49,43 +49,101 @@ async function searchTitles(query, page = 1, limit = 20) {
  * Получить каталог тайтлов
  */
 async function getCatalog(page = 1, limit = 10) {
-    const response = await apiClient.get(`/titles?limit=${limit}&page=${page}&sort=createdAt:desc`);
+    console.log(`[API] Запрос каталога: page=${page}, limit=${limit}`);
     
-    let titles = [];
-    let total = 0;
-    let totalPages = 0;
-    
-    if (response.data.data && response.data.data.titles) {
-        titles = response.data.data.titles;
-        total = response.data.data.pagination.total;
-        totalPages = response.data.data.pagination.pages;
-    } else if (response.data.data) {
-        titles = response.data.data;
-        total = response.data.total || titles.length;
-        totalPages = Math.ceil(total / limit);
-    } else {
-        titles = response.data;
-        total = titles.length;
-        totalPages = Math.ceil(total / limit);
+    try {
+        const response = await apiClient.get(`/titles?limit=${limit}&page=${page}&sort=createdAt:desc`);
+        
+        console.log(`[API] Ответ каталога: status=${response.status}`);
+        console.log(`[API] Структура ответа:`, JSON.stringify(response.data).substring(0, 1000));
+        
+        let titles = [];
+        let total = 0;
+        let totalPages = 0;
+        
+        // Обрабатываем разные форматы ответа API
+        if (response.data && response.data.data && Array.isArray(response.data.data)) {
+            // Формат: { data: [...] }
+            titles = response.data.data;
+            total = response.data.total || titles.length;
+            totalPages = Math.ceil(total / limit);
+            console.log(`[API] Найдено тайтлов: ${titles.length}, всего: ${total}, страниц: ${totalPages}`);
+        } else if (response.data && response.data.data && response.data.data.titles) {
+            // Формат: { data: { titles: [...], pagination: {...} } }
+            titles = response.data.data.titles;
+            total = response.data.data.pagination?.total || titles.length;
+            totalPages = response.data.data.pagination?.pages || Math.ceil(total / limit);
+            console.log(`[API] Найдено тайтлов: ${titles.length}, всего: ${total}, страниц: ${totalPages}`);
+        } else if (response.data && Array.isArray(response.data)) {
+            // Формат: [...]
+            titles = response.data;
+            total = titles.length;
+            totalPages = Math.ceil(total / limit);
+            console.log(`[API] Найдено тайтлов: ${titles.length}`);
+        } else if (response.data && response.data.titles && Array.isArray(response.data.titles)) {
+            // Формат: { titles: [...] }
+            titles = response.data.titles;
+            total = response.data.total || titles.length;
+            totalPages = Math.ceil(total / limit);
+            console.log(`[API] Найдено тайтлов: ${titles.length}`);
+        } else {
+            console.log(`[API] Неизвестный формат ответа:`, typeof response.data, response.data);
+        }
+        
+        return { titles, total, totalPages };
+    } catch (error) {
+        console.error(`[API] Ошибка получения каталога:`, error.message);
+        if (error.response) {
+            console.error(`[API] Ответ сервера:`, error.response.status, error.response.data);
+        }
+        throw error;
     }
-    
-    return { titles, total, totalPages };
 }
 
 /**
  * Получить информацию о тайтле
  */
 async function getTitle(titleId) {
-    const response = await apiClient.get(`/titles/${titleId}`);
-    return response.data.data || response.data;
+    console.log(`[API] Запрос тайтла: ${titleId}`);
+    
+    try {
+        const response = await apiClient.get(`/titles/${titleId}`);
+        
+        console.log(`[API] Ответ тайтла: status=${response.status}`);
+        
+        const titleData = response.data.data || response.data;
+        console.log(`[API] Данные тайтла:`, JSON.stringify(titleData).substring(0, 500));
+        
+        return titleData;
+    } catch (error) {
+        console.error(`[API] Ошибка получения тайтла ${titleId}:`, error.message);
+        if (error.response) {
+            console.error(`[API] Ответ сервера:`, error.response.status, error.response.data);
+        }
+        throw error;
+    }
 }
 
 /**
  * Получить количество глав тайтла
  */
 async function getChapterCount(titleId) {
-    const response = await apiClient.get(`/titles/${titleId}/chapters/count`);
-    return response.data.data?.count || response.data.count || 0;
+    console.log(`[API] Запрос количества глав для тайтла: ${titleId}`);
+    
+    try {
+        const response = await apiClient.get(`/titles/${titleId}/chapters/count`);
+        
+        const count = response.data.data?.count || response.data.count || 0;
+        console.log(`[API] Количество глав: ${count}`);
+        
+        return count;
+    } catch (error) {
+        console.error(`[API] Ошибка получения количества глав для ${titleId}:`, error.message);
+        if (error.response) {
+            console.error(`[API] Ответ сервера:`, error.response.status, error.response.data);
+        }
+        throw error;
+    }
 }
 
 /**

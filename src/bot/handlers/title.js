@@ -10,8 +10,13 @@ const { prepareChapterForReading } = require('../../utils/pdf');
  */
 async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
     try {
+        console.log(`[TITLE] Просмотр тайтла: ${titleId}`);
+        
         const title = await getTitle(titleId);
+        console.log(`[TITLE] Тайтл получен:`, title?.name || 'Без названия');
+        
         const totalChapters = await getChapterCount(titleId);
+        console.log(`[TITLE] Количество глав: ${totalChapters}`);
 
         const baseURL = require('../../services/api').getBaseURL();
         const titleSlug = title.slug || titleId;
@@ -27,7 +32,8 @@ async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
         caption += `📖 Статус: ${title.status || 'N/A'}\n`;
         caption += `📚 Глав: ${totalChapters || 'N/A'}\n`;
         caption += `📝 ${description}\n\n`;
-        caption += `[🌐 Читать на сайте](${titleUrl})`;
+        caption += `[🌐 Читай мангу, манхву и маньхуа на сайте TOMILO LIB ](https://tomilo-lib.ru)`;
+        caption += `[🌐 Читать ${title.name} на сайте](${titleUrl})`;
 
         if (title.coverImage) {
             let coverUrl;
@@ -67,7 +73,10 @@ async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
  */
 async function showChaptersHandler(ctx, titleId, page = 1) {
     try {
+        console.log(`[CHAPTERS] Показать главы для тайтла: ${titleId}, страница: ${page}`);
+        
         const totalChapters = await getChapterCount(titleId);
+        console.log(`[CHAPTERS] Всего глав: ${totalChapters}`);
 
         if (totalChapters === 0) {
             await ctx.reply('Главы не найдены.');
