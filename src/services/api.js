@@ -139,7 +139,10 @@ async function getTitle(titleId) {
     console.log(`[API] Запрос тайтла: ${titleId}`);
     
     try {
-        const response = await apiClient.get(`/titles/${titleId}`);
+        // populate обложки для карточки в боте (Strapi и др. поддерживают)
+        const response = await apiClient.get(`/titles/${titleId}`, {
+            params: { populate: 'coverImage,cover,poster,image,thumbnail' }
+        });
         
         console.log(`[API] Ответ тайтла: status=${response.status}`);
         

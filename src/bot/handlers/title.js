@@ -10,27 +10,52 @@ const { TELEGRAPH_ACCESS_TOKEN } = require('../../config');
 
 function resolveCoverImageUrl(coverImage, baseURL) {
     if (!coverImage) return null;
+    // Strapi и др.: relation может быть массивом (data: [ {...} ])
+    const single = Array.isArray(coverImage) ? coverImage[0] : coverImage;
+    const media = single?.data ?? single;
+    if (!media) return null;
     let pathOrUrl;
-    if (typeof coverImage === 'string') {
-        pathOrUrl = coverImage;
-    } else if (coverImage && typeof coverImage === 'object') {
-        const data = coverImage.data ?? coverImage;
+    if (typeof media === 'string') {
+        pathOrUrl = media;
+    } else if (media && typeof media === 'object') {
+        const data = media.data ?? media;
         const attrs = data?.attributes ?? data;
         pathOrUrl =
             attrs?.url ??
             attrs?.formats?.large?.url ??
             attrs?.formats?.medium?.url ??
             attrs?.formats?.small?.url ??
-            coverImage.url ??
-            coverImage.formats?.large?.url ??
-            coverImage.formats?.medium?.url ??
-            coverImage.formats?.small?.url;
+            media.url ??
+            media.formats?.large?.url ??
+            media.formats?.medium?.url ??
+            media.formats?.small?.url ??
+            single?.url ??
+            single?.formats?.large?.url ??
+            single?.formats?.medium?.url ??
+            single?.formats?.small?.url ??
+            coverImage?.url ??
+            coverImage?.formats?.large?.url ??
+            coverImage?.formats?.medium?.url ??
+            coverImage?.formats?.small?.url;
     }
     if (!pathOrUrl) return null;
     if (pathOrUrl.startsWith('http')) return pathOrUrl;
     if (pathOrUrl.startsWith('/uploads/')) return `${baseURL}${pathOrUrl}`;
     if (pathOrUrl.startsWith('/')) return `${baseURL}/uploads${pathOrUrl}`;
     return `${baseURL}/uploads/${pathOrUrl}`;
+}
+
+/** Получить объект обложки из тайтла (разные API могут отдавать в разных полях) */
+function getTitleCover(title) {
+    if (!title) return null;
+    return (
+        title.coverImage ??
+        title.cover ??
+        title.poster ??
+        title.image ??
+        title.thumbnail ??
+        null
+    );
 }
 
 /**
@@ -71,7 +96,7 @@ async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
         caption += `Читай мангу, манхву и маньхуа на сайте TOMILO LIB #tomilo-lib.ru\n`;
 
 
-        const coverImageUrl = resolveCoverImageUrl(title.coverImage, baseURL);
+        const coverImageUrl = resolveCoverImageUrl(getTitleCover(title), baseURL);
         if (coverImageUrl) {
             try {
                 await ctx.replyWithPhoto(coverImageUrl, { caption: caption, parse_mode: 'Markdown' });
@@ -83,6 +108,12 @@ async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
                 }
             }
         } else {
+            const coverRaw = getTitleCover(title);
+            if (coverRaw == null) {
+                console.log(`[TITLE] У тайтла "${titleName}" нет обложки в ответе API (проверьте populate coverImage/cover в GET /titles/:id).`);
+            } else {
+                console.log(`[TITLE] У тайтла "${titleName}" обложка в неожиданном формате:`, typeof coverRaw, JSON.stringify(coverRaw).slice(0, 200));
+            }
             await ctx.reply(caption, { parse_mode: 'Markdown' });
         }
 
@@ -265,7 +296,7 @@ async function showChapterAsTeletype(ctx, titleId, chapterIndex) {
         }
 
         const rows = (nav.length ? [nav] : []).concat(buttonRows);
-        rows.push([Markup.button.callback('🔄 Пересоздать просмотр', `recreate_iv_${chapterId}__${titleId}__${chapterIndex}`)]);
+        rows.push([Markup.button.callback('🔄 Пересоздать просмотр', `recreate_iv_${titleId}_${chapterIndex}`)]);
         await ctx.reply(text, {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: rows }
@@ -314,15 +345,22 @@ function setupTitleHandlers(bot) {
         await showChaptersHandler(ctx, titleId, page);
     });
 
-    // Пересоздать Instant View (если глава сломана — доступно всем)
-    bot.action(/recreate_iv_(.+)/, async (ctx) => {
-        const parts = ctx.match[1].split('__');
-        const [chapterId, titleId, chapterIndexStr] = parts;
-        const chapterIndex = parseInt(chapterIndexStr, 10);
-        if (!chapterId || !TELEGRAPH_ACCESS_TOKEN) {
+    // Пересоздать Instant View (если глава сломана — доступно всем). callback_data до 64 байт: только titleId_index
+    bot.action(/recreate_iv_(.+)_(\d+)$/, async (ctx) => {
+        const titleId = ctx.match[1];
+        const chapterIndex = parseInt(ctx.match[2], 10);
+        if (!titleId || !TELEGRAPH_ACCESS_TOKEN) {
             await ctx.answerCbQuery({ text: 'Нет данных или не задан TELEGRAPH_ACCESS_TOKEN.' }).catch(() => {});
             return;
         }
+        const totalChapters = await getChapterCount(titleId);
+        const allChapters = await getAllChapters(titleId, totalChapters, 'asc');
+        const summary = allChapters[chapterIndex];
+        if (!summary) {
+            await ctx.answerCbQuery({ text: 'Глава не найдена.' }).catch(() => {});
+            return;
+        }
+        const chapterId = summary._id ?? summary.id;
         await ctx.answerCbQuery();
         const statusMsg = await ctx.reply('🔄 Пересоздаю просмотр…');
         try {
