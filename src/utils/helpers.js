@@ -100,6 +100,75 @@ function formatDate(dateString) {
     });
 }
 
+/** Максимальная высота одного фрагмента для статей (Telegraph/Instant View), пикселей */
+const MAX_IMAGE_HEIGHT = 4096;
+
+/** Максимальный размер файла для загрузки на Telegraph, байт */
+const TELEGRAPH_MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+function mimeFromFormat(format) {
+    const f = (format || 'jpeg').toLowerCase();
+    if (f === 'png') return 'image/png';
+    if (f === 'webp') return 'image/webp';
+    return 'image/jpeg';
+}
+
+/**
+ * Уменьшить размер файла до лимита Telegraph (5 МБ): при необходимости пережать в JPEG.
+ * @param {Buffer} buffer - буфер изображения
+ * @param {string} mimeType - текущий MIME
+ * @returns {Promise<{ buffer: Buffer, mimeType: string }>}
+ */
+async function ensureUnderTelegraphLimit(buffer, mimeType) {
+    if (buffer.length <= TELEGRAPH_MAX_FILE_SIZE) {
+        return { buffer, mimeType };
+    }
+    let out = buffer;
+    for (const quality of [82, 75, 60, 50]) {
+        out = await sharp(buffer).jpeg({ quality, mozjpeg: true }).toBuffer();
+        if (out.length <= TELEGRAPH_MAX_FILE_SIZE) {
+            return { buffer: out, mimeType: 'image/jpeg' };
+        }
+    }
+    return { buffer: out, mimeType: 'image/jpeg' };
+}
+
+/**
+ * Нарезать длинное изображение на части по высоте (без потери контента).
+ * Каждая часть не выше maxHeight пикселей; все части идут в статье подряд.
+ * @param {Buffer} imageBuffer - буфер изображения
+ * @param {number} [maxHeight=4096] - максимальная высота одного фрагмента
+ * @returns {Promise<Array<{ buffer: Buffer, mimeType: string }>>}
+ */
+async function sliceImageToMaxHeight(imageBuffer, maxHeight = MAX_IMAGE_HEIGHT) {
+    const meta = await sharp(imageBuffer).metadata();
+    const width = meta.width || 0;
+    const height = meta.height || 0;
+    const format = (meta.format || 'jpeg').toLowerCase();
+    const mimeType = mimeFromFormat(format);
+
+    if (height <= 0 || width <= 0) {
+        return [{ buffer: imageBuffer, mimeType }];
+    }
+
+    if (height <= maxHeight) {
+        const one = await ensureUnderTelegraphLimit(imageBuffer, mimeType);
+        return [one];
+    }
+
+    const slices = [];
+    for (let top = 0; top < height; top += maxHeight) {
+        const sliceHeight = Math.min(maxHeight, height - top);
+        let sliceBuffer = await sharp(imageBuffer)
+            .extract({ left: 0, top, width, height: sliceHeight })
+            .toFormat(format === 'png' ? 'png' : format === 'webp' ? 'webp' : 'jpeg', format === 'jpeg' || format === 'jpg' ? { quality: 90 } : {})
+            .toBuffer();
+        const wrapped = await ensureUnderTelegraphLimit(sliceBuffer, mimeFromFormat(format));
+        slices.push(wrapped);
+    }
+    return slices;
+}
+
 /**
  * Форматировать размер файла
  */
@@ -115,6 +184,7 @@ module.exports = {
     hasSOIMarker,
     fixJPEG,
     downloadImage,
+    sliceImageToMaxHeight,
     formatDate,
     formatFileSize
 };

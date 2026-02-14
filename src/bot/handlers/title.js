@@ -64,7 +64,19 @@ function getTitleCover(title) {
 async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
     try {
         console.log(`[TITLE] Просмотр тайтла: ${titleId}`);
-        
+
+        // Удаляем предыдущую карточку и кнопки, чтобы не копились при переключении тайтлов
+        const session = ctx.session || {};
+        if (session.lastCardMessageId) {
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, session.lastCardMessageId); } catch (_) {}
+            delete session.lastCardMessageId;
+        }
+        if (session.lastMessageId) {
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, session.lastMessageId); } catch (_) {}
+            delete session.lastMessageId;
+        }
+        ctx.session = session;
+
         const title = await getTitle(titleId);
         if (!title) {
             await ctx.reply('Тайтл не найден.');
@@ -93,16 +105,17 @@ async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
         caption += `Рейтинг: ${(title.averageRanked != null && !isNaN(title.averageRanked)) ? Number(title.averageRanked).toFixed(2) : 'N/A'}\n`;
         caption += `📝 ${description}\n\n`;
         caption += `[🌐 Читать ${titleName} на сайте](${titleUrl})\n`;
-        caption += `Читай мангу, манхву и маньхуа на сайте TOMILO LIB #tomilo-lib.ru\n`;
+        caption += `Читай мангу, манхву и маньхуа на сайте TOMILO LIB tomilo-lib.ru\n`;
 
 
         const coverImageUrl = resolveCoverImageUrl(getTitleCover(title), baseURL);
+        let cardMessage;
         if (coverImageUrl) {
             try {
-                await ctx.replyWithPhoto(coverImageUrl, { caption: caption, parse_mode: 'Markdown' });
+                cardMessage = await ctx.replyWithPhoto(coverImageUrl, { caption: caption, parse_mode: 'Markdown' });
             } catch (photoErr) {
                 if (photoErr.message && (photoErr.message.includes('wrong type') || photoErr.message.includes('failed to get HTTP URL') || photoErr.code === 400)) {
-                    await ctx.reply(caption, { parse_mode: 'Markdown' });
+                    cardMessage = await ctx.reply(caption, { parse_mode: 'Markdown' });
                 } else {
                     throw photoErr;
                 }
@@ -114,7 +127,7 @@ async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
             } else {
                 console.log(`[TITLE] У тайтла "${titleName}" обложка в неожиданном формате:`, typeof coverRaw, JSON.stringify(coverRaw).slice(0, 200));
             }
-            await ctx.reply(caption, { parse_mode: 'Markdown' });
+            cardMessage = await ctx.reply(caption, { parse_mode: 'Markdown' });
         }
 
         const buttonRows = [
@@ -125,14 +138,9 @@ async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
             buttonRows.push([Markup.button.url('📱 Читать в Telegram (Teletype)', teletypeUrl)]);
         }
 
-        if (ctx.session && ctx.session.lastMessageId) {
-            try {
-                await ctx.deleteMessage(ctx.session.lastMessageId);
-            } catch (error) {}
-        }
-
         const message = await ctx.reply('Выберите главу:', { reply_markup: { inline_keyboard: buttonRows } });
         ctx.session = ctx.session || {};
+        if (cardMessage) ctx.session.lastCardMessageId = cardMessage.message_id;
         ctx.session.lastMessageId = message.message_id;
     } catch (error) {
         console.error('[TITLE] Ошибка просмотра тайтла:', error.message, error.response ? JSON.stringify(error.response.data) : '');
@@ -203,9 +211,12 @@ async function showChaptersHandler(ctx, titleId, page = 1) {
 
         ctx.session = ctx.session || {};
         if (ctx.session.chaptersMessageId) {
-            try {
-                await ctx.deleteMessage(ctx.session.chaptersMessageId);
-            } catch (error) {}
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, ctx.session.chaptersMessageId); } catch (_) {}
+        }
+        // Убираем «Выберите главу» — заменяем его списком глав
+        if (ctx.session.lastMessageId) {
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, ctx.session.lastMessageId); } catch (_) {}
+            delete ctx.session.lastMessageId;
         }
 
         const titleName = title?.name ? ` — ${title.name}` : '';
@@ -223,6 +234,12 @@ async function showChaptersHandler(ctx, titleId, page = 1) {
 async function showChapterAsTeletype(ctx, titleId, chapterIndex) {
     try {
         await ctx.answerCbQuery();
+
+        // Удаляем список глав — навигация по главам есть в карточке главы (Предыдущая/Следующая)
+        if (ctx.session?.chaptersMessageId) {
+            try { await ctx.telegram.deleteMessage(ctx.chat.id, ctx.session.chaptersMessageId); } catch (_) {}
+            delete ctx.session.chaptersMessageId;
+        }
 
         const totalChapters = await getChapterCount(titleId);
         if (totalChapters === 0) {

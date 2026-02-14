@@ -3,10 +3,14 @@
  * Страницы открываются в Telegram как Instant View (как Teletype).
  *
  * Токен: один раз создайте аккаунт (createAccount), сохраните TELEGRAPH_ACCESS_TOKEN в .env.
+ * Длинные изображения (например 800×20000) нарезаются на части по высоте и загружаются на Telegraph без потери контента.
  */
 const axios = require('axios');
+const FormData = require('form-data');
+const { downloadImage, sliceImageToMaxHeight } = require('../utils/helpers');
 
 const TELEGRAPH_API = 'https://api.telegra.ph';
+const TELEGRAPH_UPLOAD = 'https://telegra.ph/upload';
 
 /**
  * Нормализует URL картинки: пути /chapters/... превращает в /uploads/chapters/...
@@ -22,6 +26,62 @@ function normalizeImageUrl(url, baseURL) {
         path = '/uploads' + path;
     }
     return baseURL + path;
+}
+
+/**
+ * Загрузить изображение на Telegraph (telegra.ph/upload).
+ * @param {Buffer} buffer - буфер изображения
+ * @param {string} mimeType - image/jpeg, image/png, image/webp
+ * @returns {Promise<string>} полный URL загруженного изображения (https://telegra.ph/...)
+ */
+async function uploadImageToTelegraph(buffer, mimeType) {
+    const ext = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+    const form = new FormData();
+    form.append('file', buffer, { filename: `image.${ext}`, contentType: mimeType });
+
+    const { data } = await axios.post(TELEGRAPH_UPLOAD, form, {
+        headers: form.getHeaders(),
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+        timeout: 60000
+    });
+
+    if (!Array.isArray(data) || !data[0] || !data[0].src) {
+        throw new Error(data?.error || 'Telegraph upload failed');
+    }
+    const src = data[0].src;
+    return src.startsWith('http') ? src : `https://telegra.ph${src}`;
+}
+
+/**
+ * Скачать изображения, при необходимости нарезать длинные по высоте на части и загрузить на Telegraph.
+ * Один длинный кадр (например 800×20000) превращается в несколько картинок подряд — контент не теряется.
+ * @param {string[]} imageUrls - массив URL или путей к изображениям
+ * @param {string} baseURL - базовый URL сайта
+ * @returns {Promise<string[]>} массив URL для контента (оригинальные или telegra.ph, один исходный URL может дать несколько)
+ */
+async function processImageUrlsForTelegraph(imageUrls, baseURL) {
+    const result = [];
+    for (let i = 0; i < imageUrls.length; i++) {
+        const src = imageUrls[i];
+        const url = normalizeImageUrl(src, baseURL);
+        try {
+            const imageBytes = await downloadImage(url, baseURL);
+            const slices = await sliceImageToMaxHeight(imageBytes);
+            if (slices.length === 1 && slices[0].buffer === imageBytes) {
+                result.push(url);
+            } else {
+                for (const { buffer, mimeType } of slices) {
+                    const telegraphUrl = await uploadImageToTelegraph(buffer, mimeType);
+                    result.push(telegraphUrl);
+                }
+            }
+        } catch (err) {
+            console.error(`Telegraph: ошибка обработки изображения ${i + 1}/${imageUrls.length}:`, err.message);
+            result.push(url);
+        }
+    }
+    return result;
 }
 
 /**
@@ -174,9 +234,11 @@ async function createInstantViewForChapter(accessToken, input) {
         throw new Error('В этой главе нет изображений для просмотра');
     }
 
+    const processedUrls = await processImageUrlsForTelegraph(imageUrls, baseURL);
+
     return createPage(accessToken, {
         title: pageTitle,
-        imageUrls,
+        imageUrls: processedUrls,
         authorName: 'TOMILO LIB',
         authorUrl: 'https://tomilo-lib.ru'
     });
