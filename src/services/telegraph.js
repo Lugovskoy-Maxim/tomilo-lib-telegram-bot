@@ -9,6 +9,22 @@ const axios = require('axios');
 const TELEGRAPH_API = 'https://api.telegra.ph';
 
 /**
+ * Нормализует URL картинки: пути /chapters/... превращает в /uploads/chapters/...
+ * @param {string} url - URL или путь (например /chapters/xxx/001.jpeg)
+ * @param {string} baseURL - базовый URL сайта
+ * @returns {string} полный URL
+ */
+function normalizeImageUrl(url, baseURL) {
+    if (typeof url !== 'string' || !url) return url;
+    if (url.startsWith('http')) return url;
+    let path = url.startsWith('/') ? url : `/${url}`;
+    if (path.startsWith('/chapters/') && !path.startsWith('/uploads/')) {
+        path = '/uploads' + path;
+    }
+    return baseURL + path;
+}
+
+/**
  * Создать аккаунт Telegraph (выполнить один раз, токен сохранить в .env).
  * @param {string} shortName - короткое имя (до 32 символов)
  * @param {string} [authorName] - имя автора
@@ -39,10 +55,12 @@ async function createAccount(shortName, authorName = 'TOMILO LIB', authorUrl = '
  */
 async function createPage(accessToken, options) {
     const { title, imageUrls = [], authorName = 'TOMILO LIB', authorUrl = 'https://tomilo-lib.ru' } = options;
+    const getBaseURL = () => require('./api').getBaseURL();
+    const baseURL = getBaseURL();
 
     const content = [];
     for (const src of imageUrls) {
-        const url = src.startsWith('http') ? src : `https://tomilo-lib.ru${src.startsWith('/') ? '' : '/'}${src}`;
+        const url = normalizeImageUrl(src, baseURL);
         content.push({ tag: 'img', attrs: { src: url } });
     }
     if (content.length === 0) {
@@ -135,11 +153,21 @@ async function createInstantViewForChapter(accessToken, input) {
     const pagesRaw = rawChapter.pages ?? chapter.pages ?? chapter.attributes?.pages ?? [];
     const baseURL = getBaseURL();
     const imageUrls = pagesRaw.map((p) => {
-        if (typeof p === 'string') return p.startsWith('http') ? p : `${baseURL}${p.startsWith('/') ? '' : '/'}${p}`;
+        if (typeof p === 'string') return normalizeImageUrl(p, baseURL);
         if (!p || typeof p !== 'object') return null;
-        const url = p.url ?? p.image?.url ?? p.image?.formats?.small?.url ?? p.image?.formats?.medium?.url;
+        const data = p.data ?? p;
+        const attrs = data?.attributes ?? data;
+        const url =
+            attrs?.url ??
+            attrs?.formats?.small?.url ??
+            attrs?.formats?.medium?.url ??
+            p.url ??
+            p.image?.url ??
+            p.image?.data?.attributes?.url ??
+            p.image?.formats?.small?.url ??
+            p.image?.formats?.medium?.url;
         if (!url) return null;
-        return url.startsWith('http') ? url : `${baseURL}${url.startsWith('/') ? '' : '/'}${url}`;
+        return normalizeImageUrl(url, baseURL);
     }).filter(Boolean);
 
     if (imageUrls.length === 0) {

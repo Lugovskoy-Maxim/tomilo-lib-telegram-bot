@@ -206,7 +206,17 @@ function normalizeChapter(chapter) {
     const normalizedPages = pages.map((p) => {
         if (typeof p === 'string') return p;
         if (p && typeof p === 'object') {
-            const url = p.url ?? p.image?.url ?? p.image?.formats?.small?.url ?? p.image?.formats?.medium?.url;
+            const data = p.data ?? p;
+            const attrs = data?.attributes ?? data;
+            const url =
+                attrs?.url ??
+                attrs?.formats?.small?.url ??
+                attrs?.formats?.medium?.url ??
+                p.url ??
+                p.image?.url ??
+                p.image?.data?.attributes?.url ??
+                p.image?.formats?.small?.url ??
+                p.image?.formats?.medium?.url;
             if (url) return url;
         }
         return null;

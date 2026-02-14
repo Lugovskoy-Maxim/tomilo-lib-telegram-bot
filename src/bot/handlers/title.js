@@ -6,7 +6,7 @@ const { getTitle, getChapterCount, getAllChapters, getChapter, getBaseURL } = re
 const { formatDate } = require('../../utils/helpers');
 const { getLink: getChapterViewLink, setLink: setChapterViewLink } = require('../../db/links');
 const { createInstantViewForChapter } = require('../../services/telegraph');
-const { TELEGRAPH_ACCESS_TOKEN, ADMIN_USER_IDS } = require('../../config');
+const { TELEGRAPH_ACCESS_TOKEN } = require('../../config');
 
 function resolveCoverImageUrl(coverImage, baseURL) {
     if (!coverImage) return null;
@@ -67,8 +67,9 @@ async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
         caption += `Просмотров: ${title.views || 'N/A'}\n`;
         caption += `Рейтинг: ${(title.averageRanked != null && !isNaN(title.averageRanked)) ? Number(title.averageRanked).toFixed(2) : 'N/A'}\n`;
         caption += `📝 ${description}\n\n`;
-        caption += `[🌐 Читай мангу, манхву и маньхуа на сайте TOMILO LIB ](https://tomilo-lib.ru)\n`;
         caption += `[🌐 Читать ${titleName} на сайте](${titleUrl})\n`;
+        caption += `Читай мангу, манхву и маньхуа на сайте TOMILO LIB #tomilo-lib.ru\n`;
+
 
         const coverImageUrl = resolveCoverImageUrl(title.coverImage, baseURL);
         if (coverImageUrl) {
@@ -215,6 +216,7 @@ async function showChapterAsTeletype(ctx, titleId, chapterIndex) {
 
         const baseURL = getBaseURL();
         const titleSlug = title.slug || titleId;
+        const titleUrl = `${baseURL}/titles/${titleSlug}`;
         const chapterUrl = `${baseURL}/titles/${titleSlug}/chapter/${chapter._id ?? chapter.id ?? chapterId}`;
         let teletypeUrl = getChapterViewLink(chapterId) || chapter.teletypeUrl || chapter.instantViewUrl;
 
@@ -248,11 +250,11 @@ async function showChapterAsTeletype(ctx, titleId, chapterIndex) {
             text += 'Читайте главу на сайте по кнопке ниже.';
         }
 
-        const buttons = [];
+        const buttonRows = [];
         if (teletypeUrl) {
-            buttons.push({ text: '📱 Открыть в Telegram (Teletype)', url: teletypeUrl });
+            buttonRows.push([{ text: '📱 Читать в Telegram (Instant View)', url: teletypeUrl }]);
         }
-        buttons.push({ text: '🌐 Читать на сайте', url: chapterUrl });
+        buttonRows.push([{ text: '🌐 Глава на сайте', url: chapterUrl }, { text: '📚 Тайтл на сайте', url: titleUrl }]);
 
         const nav = [];
         if (chapterIndex > 0) {
@@ -262,10 +264,8 @@ async function showChapterAsTeletype(ctx, titleId, chapterIndex) {
             nav.push(Markup.button.callback('➡️ Следующая', `select_chapter_${titleId}_${chapterIndex + 1}`));
         }
 
-        const rows = [nav, buttons].filter((r) => r.length > 0);
-        if (ADMIN_USER_IDS.length > 0 && ADMIN_USER_IDS.includes(String(ctx.from?.id))) {
-            rows.push([Markup.button.callback('🔄 Пересоздать просмотр', `recreate_iv_${chapterId}__${titleId}__${chapterIndex}`)]);
-        }
+        const rows = (nav.length ? [nav] : []).concat(buttonRows);
+        rows.push([Markup.button.callback('🔄 Пересоздать просмотр', `recreate_iv_${chapterId}__${titleId}__${chapterIndex}`)]);
         await ctx.reply(text, {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: rows }
@@ -314,13 +314,8 @@ function setupTitleHandlers(bot) {
         await showChaptersHandler(ctx, titleId, page);
     });
 
-    // Пересоздать Instant View (только для админов)
+    // Пересоздать Instant View (если глава сломана — доступно всем)
     bot.action(/recreate_iv_(.+)/, async (ctx) => {
-        const fromId = String(ctx.from?.id);
-        if (!ADMIN_USER_IDS.length || !ADMIN_USER_IDS.includes(fromId)) {
-            await ctx.answerCbQuery({ text: 'Недостаточно прав.' }).catch(() => {});
-            return;
-        }
         const parts = ctx.match[1].split('__');
         const [chapterId, titleId, chapterIndexStr] = parts;
         const chapterIndex = parseInt(chapterIndexStr, 10);
