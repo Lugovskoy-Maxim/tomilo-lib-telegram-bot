@@ -66,8 +66,9 @@ async function fixJPEG(imageBuffer) {
  */
 async function downloadImage(imageUrl, baseURL) {
     let fullImageUrl;
-    
-    if (imageUrl.startsWith('/uploads/')) {
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+        fullImageUrl = imageUrl;
+    } else if (imageUrl.startsWith('/uploads/')) {
         fullImageUrl = `${baseURL}${imageUrl}`;
     } else if (imageUrl.startsWith('/')) {
         fullImageUrl = `${baseURL}/uploads${imageUrl}`;

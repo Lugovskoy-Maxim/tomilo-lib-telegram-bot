@@ -9,7 +9,11 @@
     "test-start": "node tests/test-start.js",
     "debug-start": "node tests/debug-start.js",
     "test-bot": "node tests/test-bot.js",
-    "check-output": "node tests/check-output.js"
+    "check-output": "node tests/check-output.js",
+    "server": "node src/server/index.js",
+    "telegraph:account": "node src/scripts/telegraph-create-account.js",
+    "instant-view": "node src/scripts/create-instant-view.js",
+    "recreate-instant-view": "node src/scripts/recreate-instant-view.js"
   },
   "keywords": [
     "telegram",
@@ -33,4 +37,3 @@
     "nodemon": "^3.1.11"
   }
 }
-

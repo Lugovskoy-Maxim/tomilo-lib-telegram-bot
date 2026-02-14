@@ -156,16 +156,22 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
         if (chapterIndex < allChapters.length - 1) {
             navigationButtons.push({ text: '➡️ Следующая', callback_data: `select_chapter_${titleId}_${chapterIndex + 1}` });
         }
+        const teletypeUrl = chapter.teletypeUrl || chapter.instantViewUrl;
+        const linkButtons = [{ text: '🌐 Читать на сайте', url: chapterUrl }];
+        if (teletypeUrl) {
+            linkButtons.push({ text: '📱 Открыть в Telegram (Teletype)', url: teletypeUrl });
+        }
 
         const createdDate = formatDate(chapter.createdAt);
         const caption = `📚 *${title.name}*\n📖 Глава ${chapter.number || chapter.chapterNumber || 'N/A'}\n📅 ${createdDate}\n✅ Изображений: ${successImages}/${images.length}\n\n[🌐 Читать на сайте](${chapterUrl})`;
 
+        const inlineKeyboard = navigationButtons.length > 0 ? [navigationButtons, linkButtons] : [linkButtons];
         await ctx.replyWithDocument(
             { source: pdfPath, filename: `${title.name}_глава_${chapter.number || chapter.chapterNumber || 'N/A'}.pdf` },
             {
                 caption: caption,
                 parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard: [navigationButtons] }
+                reply_markup: { inline_keyboard: inlineKeyboard }
             }
         );
 

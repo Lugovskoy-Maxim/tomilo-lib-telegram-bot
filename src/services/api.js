@@ -2,7 +2,7 @@
  * API сервис для работы с внешним API
  */
 const axios = require('axios');
-const { API_BASE_URL } = require('../config');
+const { API_BASE_URL, API_TOKEN } = require('../config');
 
 const apiClient = axios.create({
     baseURL: API_BASE_URL,
@@ -11,6 +11,17 @@ const apiClient = axios.create({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
 });
+
+if (API_TOKEN) {
+    apiClient.interceptors.request.use((config) => {
+        if (API_TOKEN.startsWith('Bearer ') || API_TOKEN.length > 100) {
+            config.headers.Authorization = API_TOKEN.startsWith('Bearer ') ? API_TOKEN : `Bearer ${API_TOKEN}`;
+        } else {
+            config.headers['X-API-Key'] = API_TOKEN;
+        }
+        return config;
+    });
+}
 
 /**
  * Получить базовый URL без /api для статических файлов
@@ -101,9 +112,30 @@ async function getCatalog(page = 1, limit = 10) {
 }
 
 /**
+ * Нормализовать объект тайтла из разных форматов API (в т.ч. Strapi v4: id + attributes)
+ */
+function normalizeTitle(raw) {
+    if (!raw) return null;
+    if (raw.attributes && typeof raw.attributes === 'object') {
+        const id = raw.id ?? raw.documentId;
+        return { _id: id, id, documentId: raw.documentId, ...raw.attributes };
+    }
+    const id = raw.id ?? raw._id ?? raw.documentId;
+    return { ...raw, _id: raw._id ?? id, id: raw.id ?? id };
+}
+
+/**
  * Получить информацию о тайтле
  */
 async function getTitle(titleId) {
+    if (titleId != null && typeof titleId === 'object') {
+        titleId = titleId._id ?? titleId.id ?? titleId.documentId ?? null;
+        if (titleId != null) titleId = String(titleId);
+    }
+    if (!titleId || typeof titleId !== 'string') {
+        console.warn('[API] getTitle: неверный titleId', titleId);
+        return null;
+    }
     console.log(`[API] Запрос тайтла: ${titleId}`);
     
     try {
@@ -111,8 +143,12 @@ async function getTitle(titleId) {
         
         console.log(`[API] Ответ тайтла: status=${response.status}`);
         
-        const titleData = response.data.data || response.data;
-        console.log(`[API] Данные тайтла:`, JSON.stringify(titleData).substring(0, 500));
+        if (response.data && response.data.success === false) {
+            return null;
+        }
+        const raw = response.data.data ?? response.data;
+        const titleData = normalizeTitle(raw);
+        console.log(`[API] Данные тайтла:`, titleData ? JSON.stringify(titleData).substring(0, 500) : 'null');
         
         return titleData;
     } catch (error) {
@@ -125,7 +161,7 @@ async function getTitle(titleId) {
 }
 
 /**
- * Получить количество глав тайтла
+ * Получить количество глав тайтла (при ошибке API возвращаем 0, чтобы карточка тайтла всё равно открылась)
  */
 async function getChapterCount(titleId) {
     console.log(`[API] Запрос количества глав для тайтла: ${titleId}`);
@@ -133,24 +169,28 @@ async function getChapterCount(titleId) {
     try {
         const response = await apiClient.get(`/titles/${titleId}/chapters/count`);
         
-        const count = response.data.data?.count || response.data.count || 0;
+        const count = response.data.data?.count ?? response.data.count ?? 0;
         console.log(`[API] Количество глав: ${count}`);
         
         return count;
     } catch (error) {
-        console.error(`[API] Ошибка получения количества глав для ${titleId}:`, error.message);
+        console.warn(`[API] Количество глав для ${titleId} недоступно:`, error.message);
         if (error.response) {
-            console.error(`[API] Ответ сервера:`, error.response.status, error.response.data);
+            console.warn(`[API] Ответ:`, error.response.status, error.response.data);
         }
-        throw error;
+        return 0;
     }
 }
 
 /**
  * Получить все главы тайтла
+ * @param {string} titleId - ID тайтла
+ * @param {number} limit - макс. количество глав
+ * @param {'asc'|'desc'} sortOrder - порядок: asc (1,2,3...) для списка глав, desc для новостей
  */
-async function getAllChapters(titleId, limit = 1000) {
-    const response = await apiClient.get(`/chapters/title/${titleId}?sort=number:desc&limit=${limit}`);
+async function getAllChapters(titleId, limit = 1000, sortOrder = 'asc') {
+    const sort = sortOrder === 'desc' ? 'number:desc' : 'number:asc';
+    const response = await apiClient.get(`/chapters/title/${titleId}?sort=${sort}&limit=${limit}`);
     const chaptersData = response.data.data || response.data;
     return Array.isArray(chaptersData) ? chaptersData : chaptersData.chapters || [];
 }
@@ -158,9 +198,35 @@ async function getAllChapters(titleId, limit = 1000) {
 /**
  * Получить информацию о главе
  */
+function normalizeChapter(chapter) {
+    if (!chapter) return null;
+    const raw = chapter.attributes ? { ...chapter.attributes, id: chapter.id, ...chapter } : chapter;
+    let pages = raw.pages ?? raw.images ?? [];
+    if (!Array.isArray(pages)) pages = [];
+    const normalizedPages = pages.map((p) => {
+        if (typeof p === 'string') return p;
+        if (p && typeof p === 'object') {
+            const url = p.url ?? p.image?.url ?? p.image?.formats?.small?.url ?? p.image?.formats?.medium?.url;
+            if (url) return url;
+        }
+        return null;
+    }).filter(Boolean);
+    return { ...raw, pages: normalizedPages };
+}
+
 async function getChapter(chapterId) {
     const response = await apiClient.get(`/chapters/${chapterId}`);
-    return response.data.data || response.data;
+    const data = response.data.data || response.data;
+    return normalizeChapter(data);
+}
+
+/**
+ * Обновить главу (например, записать teletypeUrl после создания Instant View).
+ * Бэкенд должен поддерживать PATCH /chapters/:id с телом { teletypeUrl } (или instantViewUrl).
+ */
+async function updateChapter(chapterId, payload) {
+    const response = await apiClient.patch(`/chapters/${chapterId}`, payload);
+    return response.data.data ?? response.data;
 }
 
 /**
@@ -212,6 +278,7 @@ module.exports = {
     getChapterCount,
     getAllChapters,
     getChapter,
+    updateChapter,
     getLatestUpdates
 };
 

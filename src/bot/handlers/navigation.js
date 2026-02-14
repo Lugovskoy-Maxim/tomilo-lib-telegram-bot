@@ -1,11 +1,9 @@
 /**
  * Навигационные обработчики (каталог, новые главы)
  */
-const axios = require('axios');
 const { Markup } = require('telegraf');
-const { API_BASE_URL } = require('../../config');
-const { getLatestUpdates } = require('../../services/api');
-const { createAndSendPDF } = require('../../utils/pdf');
+const { getLatestUpdates, getChapter, getAllChapters } = require('../../services/api');
+const { showChapterAsTeletype } = require('./title');
 
 /**
  * Показать ленту новых глав
@@ -31,7 +29,7 @@ async function showNewChaptersFeed(ctx) {
             const chapterNumber = chapter.chapterNumber || 'N/A';
             const chapterId = chapter._id;
 
-            message += `${i + 1}. *${titleName}* - ${chapter.chapter}\n`;
+            message += `${i + 1}. *${titleName}* — гл. ${chapter.number ?? chapter.chapterNumber ?? chapter.chapter ?? 'N/A'}\n`;
 
             if (chapter.timeAgo) {
                 const date = new Date(chapter.timeAgo).toLocaleDateString('ru-RU');
@@ -46,7 +44,7 @@ async function showNewChaptersFeed(ctx) {
         }
 
         const buttons = chapters.map((chapter, index) =>
-            Markup.button.callback(`Читать ${index + 1}`, `read_feed_chapter_${chapter._id}`)
+            Markup.button.callback(`Читать ${index + 1}`, `read_feed_chapter_${chapter._id ?? chapter.id}`)
         );
 
         const buttonRows = [];
@@ -68,40 +66,40 @@ async function readFeedChapter(ctx, chapterId) {
     try {
         await ctx.answerCbQuery();
 
-        const chapterResponse = await axios.get(`${API_BASE_URL}/chapters/${chapterId}`, { timeout: 10000 });
-        const chapter = chapterResponse.data.data || chapterResponse.data;
+        const chapter = await getChapter(chapterId);
+        const titleId = chapter.titleId ?? chapter.title?.id ?? chapter.title;
+        if (!titleId) {
+            await ctx.reply('Не удалось определить тайтл главы.');
+            return;
+        }
 
-        const titleResponse = await axios.get(`${API_BASE_URL}/titles/${chapter.titleId}`, { timeout: 10000 });
-        const title = titleResponse.data.data || titleResponse.data;
+        const allChapters = await getAllChapters(titleId, 1000, 'asc');
+        const chapterIndex = allChapters.findIndex(c => (c._id ?? c.id) === chapterId);
+        if (chapterIndex === -1) {
+            await ctx.reply('Глава не найдена в списке.');
+            return;
+        }
 
-        const statusMessage = await ctx.reply(`📖 Глава ${chapter.number || chapter.chapterNumber || 'N/A'} формируется...\nЗагружено изображений: 0/${chapter.pages?.length || 0}`);
-
-        const baseURL = API_BASE_URL.replace('/api', '');
-        const chapterUrl = `${baseURL}/titles/${title.slug || chapter.titleId}/chapter/${chapterId}`;
-
-        const { getAllChapters } = require('../../services/api');
-        const allChapters = await getAllChapters(chapter.titleId, 1000);
-        const chapterIndex = allChapters.findIndex(c => c._id === chapterId);
-
-        createAndSendPDF(ctx, chapter.titleId, chapterIndex, chapter, title, chapterUrl, statusMessage, allChapters).catch(console.error);
+        await showChapterAsTeletype(ctx, titleId, chapterIndex);
     } catch (error) {
         console.error('Ошибка при чтении главы из ленты:', error);
-        await ctx.reply('Произошла ошибка при создании PDF. Попробуйте позже.');
+        await ctx.reply('Произошла ошибка. Попробуйте позже.');
     }
 }
 
 function setupNavigationHandlers(bot) {
     // Добавляем logging для отладки
     console.log('[NAVIGATION] Setting up navigation handlers');
-    
+
     // Кнопка "Новые главы"
     bot.hears('🆕 Новые главы', async (ctx) => {
-        console.log('[NAVIGATION] Received "🆕 Новые главы" message:', ctx.message);
+        console.log('[NAVIGATION] MATCHED "🆕 Новые главы" hears handler!');
+        console.log('[NAVIGATION] Message text:', ctx.message?.text);
         await showNewChaptersFeed(ctx);
     });
 
     bot.command('new', async (ctx) => {
-        console.log('[NAVIGATION] Received /new command');
+        console.log('[NAVIGATION] MATCHED /new command!');
         await showNewChaptersFeed(ctx);
     });
 
@@ -121,9 +119,21 @@ function setupNavigationHandlers(bot) {
         await readFeedChapter(ctx, ctx.match[1]);
     });
 
-    // Мои тайтлы (заглушка)
+    // Мои тайтлы — список закладок
     bot.hears('📖 Мои тайтлы', async (ctx) => {
-        await ctx.reply('Функция "Мои тайтлы" пока не реализована.');
+        const bookmarks = ctx.session?.bookmarks;
+        if (!bookmarks || bookmarks.length === 0) {
+            await ctx.reply('У вас пока нет сохранённых тайтлов. Откройте тайтл из каталога или поиска и нажмите «🔖 Добавить в закладки».');
+            return;
+        }
+        const { getTitle } = require('../../services/api');
+        const names = await Promise.all(
+            bookmarks.map((id) => getTitle(id).then((t) => t?.name || id).catch(() => id))
+        );
+        const buttonRows = names.map((name, i) => [
+            Markup.button.callback(name.substring(0, 30) + (name.length > 30 ? '…' : ''), `view_title_${bookmarks[i]}`)
+        ]);
+        await ctx.reply('📖 Мои тайтлы:', { reply_markup: { inline_keyboard: buttonRows } });
     });
 }
 

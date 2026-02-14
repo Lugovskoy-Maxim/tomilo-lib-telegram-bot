@@ -37,10 +37,11 @@ async function handleSearchInput(ctx, bot) {
             return;
         }
         
+        const titleId = (t) => t.id ?? t._id ?? t.documentId ?? t.slug ?? '';
         const buttons = titles.map(title =>
             Markup.button.callback(
-                `${title.name} (${title.releaseYear || title.year || 'N/A'})`,
-                `view_title_${title._id}`
+                `${title.name || title.title || 'Без названия'} (${title.releaseYear ?? title.year ?? 'N/A'})`,
+                `view_title_${titleId(title)}`
             )
         );
         
