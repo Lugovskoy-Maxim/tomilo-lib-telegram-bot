@@ -165,9 +165,18 @@ async function confirmBulkRange(ctx, titleId, fromNum, toNum) {
     );
 }
 
-async function runBulkPdfJob(ctx, titleId) {
-    const pending = ctx.session?.bulkPdfPending;
-    if (!pending || pending.titleId !== titleId) {
+async function runBulkPdfJob(ctx, titleId, jobOptions = {}) {
+    const pending = jobOptions.indices
+        ? {
+              titleId,
+              indices: jobOptions.indices,
+              fromNum: jobOptions.fromNum,
+              toNum: jobOptions.toNum,
+              titleName: jobOptions.titleName,
+          }
+        : ctx.session?.bulkPdfPending;
+
+    if (!pending || pending.titleId !== titleId || !pending.indices?.length) {
         await ctx.reply('Сессия истекла. Начните заново: откройте тайтл → «Скачать несколько глав».');
         return;
     }
@@ -182,8 +191,10 @@ async function runBulkPdfJob(ctx, titleId) {
 
     activeJobs.set(chatId, { stopped: false });
     delete ctx.session.bulkPdfPending;
+    delete ctx.session.bulkPdfRetry;
 
     const { indices, fromNum, toNum, titleName } = pending;
+    const isRetry = !!jobOptions.isRetry;
     const totalChapters = await getChapterCount(titleId);
     const allChapters = await getAllChapters(titleId, totalChapters, 'asc');
     const title = await getTitle(titleId);
@@ -191,7 +202,7 @@ async function runBulkPdfJob(ctx, titleId) {
     const titleSlug = title.slug || titleId;
 
     const statusMsg = await ctx.reply(
-        `📥 Загрузка: *${titleName}*\n` +
+        `${isRetry ? '🔄 Повтор' : '📥 Загрузка'}: *${titleName}*\n` +
             `Главы ${fromNum}–${toNum}\n` +
             `⏳ Подготовка… (0/${indices.length})`,
         {
@@ -204,6 +215,7 @@ async function runBulkPdfJob(ctx, titleId) {
     let cached = 0;
     let failed = 0;
     let skipped = 0;
+    const failedIndices = [];
 
     for (let step = 0; step < indices.length; step++) {
         if (isJobStopped(chatId)) {
@@ -239,12 +251,14 @@ async function runBulkPdfJob(ctx, titleId) {
         } catch (error) {
             const apiMsg = error.response?.data?.message || error.message;
             failed += 1;
+            failedIndices.push(chapterIndex);
             console.warn(`[BULK-PDF] Доступ к главе ${chapterId}:`, apiMsg);
             continue;
         }
 
         if (!(chapter.pages || []).length) {
             failed += 1;
+            failedIndices.push(chapterIndex);
             continue;
         }
 
@@ -265,6 +279,7 @@ async function runBulkPdfJob(ctx, titleId) {
             else sent += 1;
         } else {
             failed += 1;
+            failedIndices.push(chapterIndex);
         }
 
         if (step < indices.length - 1 && !isJobStopped(chatId)) {
@@ -284,16 +299,36 @@ async function runBulkPdfJob(ctx, titleId) {
     if (failed) summary += `❌ Ошибок: ${failed}\n`;
     if (skipped) summary += `⏭ Пропущено: ${skipped}\n`;
 
+    const replyMarkup = { parse_mode: 'Markdown' };
+    if (failedIndices.length > 0) {
+        ctx.session = ctx.session || {};
+        ctx.session.bulkPdfRetry = {
+            titleId,
+            indices: failedIndices,
+            fromNum,
+            toNum,
+            titleName,
+        };
+        replyMarkup.reply_markup = {
+            inline_keyboard: [[
+                Markup.button.callback(
+                    `🔄 Повторить ошибочные (${failedIndices.length})`,
+                    `bulk_pdf_retry_${titleId}`,
+                ),
+            ]],
+        };
+    }
+
     try {
         await ctx.telegram.editMessageText(
             ctx.chat.id,
             statusMsg.message_id,
             null,
             summary,
-            { parse_mode: 'Markdown' },
+            replyMarkup,
         );
     } catch (_) {
-        await ctx.reply(summary, { parse_mode: 'Markdown' });
+        await ctx.reply(summary, replyMarkup);
     }
 }
 
@@ -329,6 +364,31 @@ function setupBulkPdfHandlers(bot) {
         try {
             await ctx.answerCbQuery({ text: 'Останавливаю после текущей главы…' });
         } catch (_) {}
+    });
+
+    bot.action(/bulk_pdf_retry_(.+)/, async (ctx) => {
+        const titleId = ctx.match[1];
+        const retry = ctx.session?.bulkPdfRetry;
+        if (!retry || retry.titleId !== titleId) {
+            try {
+                await ctx.answerCbQuery({ text: 'Нет глав для повтора' });
+            } catch (_) {}
+            await ctx.reply('Нет сохранённых ошибочных глав. Запустите загрузку заново.');
+            return;
+        }
+        try {
+            await ctx.answerCbQuery({ text: 'Повторяю…' });
+        } catch (_) {}
+        runBulkPdfJob(ctx, titleId, {
+            indices: retry.indices,
+            fromNum: retry.fromNum,
+            toNum: retry.toNum,
+            titleName: retry.titleName,
+            isRetry: true,
+        }).catch((err) => {
+            console.error('[BULK-PDF] Ошибка повтора:', err);
+            activeJobs.delete(ctx.chat?.id);
+        });
     });
 
     bot.action('bulk_pdf_cancel', async (ctx) => {

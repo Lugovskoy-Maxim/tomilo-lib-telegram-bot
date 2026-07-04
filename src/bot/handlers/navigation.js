@@ -331,6 +331,15 @@ function setupNavigationHandlers(bot) {
         const { prepareChapterForReadingFromFeed } = require('../../utils/pdf');
         await prepareChapterForReadingFromFeed(ctx, chapterId);
     });
+
+    bot.action(/pdf_feed_retry_(.+)/, async (ctx) => {
+        const chapterId = ctx.match[1];
+        try {
+            await ctx.answerCbQuery({ text: 'Повторяю…' });
+        } catch (_) {}
+        const { prepareChapterForReadingFromFeed } = require('../../utils/pdf');
+        await prepareChapterForReadingFromFeed(ctx, chapterId, { forceRecreate: false });
+    });
 }
 
 module.exports = {

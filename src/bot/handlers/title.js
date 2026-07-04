@@ -440,6 +440,17 @@ function setupTitleHandlers(bot) {
         await prepareChapterForReading(ctx, titleId, chapterIndex, { forceRecreate: false });
     });
 
+    // Повторить PDF после ошибки (без пересоздания кэша)
+    bot.action(/pdf_retry_(.+)_(\d+)/, async (ctx) => {
+        const titleId = ctx.match[1];
+        const chapterIndex = parseInt(ctx.match[2]);
+        const { prepareChapterForReading } = require('../../utils/pdf');
+        try {
+            await ctx.answerCbQuery({ text: 'Повторяю…' });
+        } catch (_) {}
+        await prepareChapterForReading(ctx, titleId, chapterIndex, { forceRecreate: false });
+    });
+
     // Пересоздать PDF по запросу пользователя
     bot.action(/pdf_recreate_(.+)_(\d+)/, async (ctx) => {
         const titleId = ctx.match[1];

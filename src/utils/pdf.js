@@ -44,6 +44,22 @@ function buildPdfCaption(entry, chapterUrl) {
     return text;
 }
 
+function buildPdfRetryKeyboard(titleId, chapterIndex, chapterUrl) {
+    const rows = [[{ text: '🔄 Повторить', callback_data: `pdf_retry_${titleId}_${chapterIndex}` }]];
+    if (chapterUrl) {
+        rows.push([{ text: '📖 Читать на сайте', url: chapterUrl }]);
+    }
+    return { inline_keyboard: rows };
+}
+
+function buildPdfRetryKeyboardForFeed(chapterId, chapterUrl) {
+    const rows = [[{ text: '🔄 Повторить', callback_data: `pdf_feed_retry_${chapterId}` }]];
+    if (chapterUrl) {
+        rows.push([{ text: '📖 Читать на сайте', url: chapterUrl }]);
+    }
+    return { inline_keyboard: rows };
+}
+
 function buildPdfKeyboard(titleId, chapterIndex, allChapters, chapter, chapterUrl, options = {}) {
     const { bulkMode = false } = options;
     if (bulkMode) {
@@ -200,10 +216,8 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
                 } catch (_) {}
             }
             if (!bulkMode) {
-                await ctx.reply('Не удалось создать PDF. Вы можете прочитать главу на сайте:', {
-                    reply_markup: {
-                        inline_keyboard: [[{ text: '📖 Читать на сайте', url: chapterUrl }]],
-                    },
+                await ctx.reply('Не удалось создать PDF.', {
+                    reply_markup: buildPdfRetryKeyboard(titleId, chapterIndex, chapterUrl),
                 });
             }
             return { ok: false, fromCache: false, error: 'build_failed' };
@@ -302,14 +316,14 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
                 );
             } catch (_) {}
         }
-        if (chapterUrl) {
-            await ctx.reply('Произошла ошибка при создании PDF. Вы можете прочитать главу на сайте:', {
-                reply_markup: {
-                    inline_keyboard: [[{ text: '📖 Читать на сайте', url: chapterUrl }]],
-                },
-            });
-        } else {
-            await ctx.reply('Произошла ошибка при создании PDF. Попробуйте позже.');
+        if (!bulkMode) {
+            if (chapterUrl) {
+                await ctx.reply('Произошла ошибка при создании PDF.', {
+                    reply_markup: buildPdfRetryKeyboard(titleId, chapterIndex, chapterUrl),
+                });
+            } else {
+                await ctx.reply('Произошла ошибка при создании PDF. Попробуйте позже.');
+            }
         }
         return { ok: false, fromCache: false, error: error.message };
     }
@@ -472,11 +486,9 @@ async function prepareChapterForReading(ctx, titleId, chapterIndex, options = {}
                 );
             } catch (_) {}
         }
-        if (chapterUrl) {
-            await ctx.reply('Произошла ошибка. Вы можете прочитать главу на сайте:', {
-                reply_markup: {
-                    inline_keyboard: [[{ text: '📖 Читать на сайте', url: chapterUrl }]],
-                },
+        if (chapterUrl && titleId != null && chapterIndex != null) {
+            await ctx.reply('Произошла ошибка при создании PDF.', {
+                reply_markup: buildPdfRetryKeyboard(titleId, chapterIndex, chapterUrl),
             });
         } else {
             await ctx.reply(errText);
@@ -509,7 +521,9 @@ async function prepareChapterForReadingFromFeed(ctx, chapterId, options = {}) {
             error.response?.data?.message ||
             error.response?.data?.errors?.[0] ||
             'Произошла ошибка при создании PDF.';
-        await ctx.reply(msg);
+        await ctx.reply(msg, {
+            reply_markup: buildPdfRetryKeyboardForFeed(chapterId),
+        });
     }
 }
 
@@ -517,6 +531,8 @@ module.exports = {
     createAndSendPDF,
     deliverChapterPdf,
     checkPremiumAccess,
+    buildPdfRetryKeyboard,
+    buildPdfRetryKeyboardForFeed,
     prepareChapterForReading,
     prepareChapterForReadingFromFeed,
 };
