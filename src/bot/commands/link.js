@@ -25,11 +25,17 @@ async function handleLinkCommand(ctx, codeArg) {
             { parse_mode: 'Markdown' },
         );
     } catch (error) {
-        const message =
+        const apiMessage =
             error.response?.data?.message ||
-            error.response?.data?.errors?.[0] ||
-            error.message ||
-            'Не удалось привязать аккаунт';
+            error.response?.data?.errors?.[0];
+        let message = apiMessage || error.message || 'Не удалось привязать аккаунт';
+        if (apiMessage === 'Bot API is not configured') {
+            message =
+                'На сервере tomilo-lib.ru не настроен TELEGRAM_BOT_API_SECRET.\n' +
+                'Добавьте одинаковый секрет в .env бэкенда и бота, затем перезапустите оба сервиса.';
+        } else if (apiMessage === 'Invalid bot API secret') {
+            message = 'Секрет бота не совпадает с сервером. Проверьте BOT_API_SECRET в .env бота.';
+        }
         await ctx.reply(`❌ ${message}`);
     }
 }

@@ -1,0 +1,9 @@
+node_modules
+.git
+.github
+logs
+data
+tests
+*.md
+.env
+test-output.pdf
