@@ -4,6 +4,7 @@
 const { Markup } = require('telegraf');
 const { SITE_URL } = require('../../config');
 const { getLinkedUser, linkAccount } = require('../../services/api');
+const { SUBSCRIPTION_BUTTON } = require('../keyboards/main');
 
 async function handleLinkCommand(ctx, codeArg) {
     const code = codeArg || (ctx.message?.text || '').replace(/^\/link\s*/i, '').trim();
@@ -43,23 +44,41 @@ async function handleLinkCommand(ctx, codeArg) {
 async function handleStatusCommand(ctx) {
     try {
         const info = await getLinkedUser(ctx.from.id);
+        const buttons = [];
+
         if (!info.linked) {
-            await ctx.reply(
-                'Telegram не привязан к аккаунту на сайте.\n\nСгенерируйте код в профиле на tomilo-lib.ru и отправьте: /link КОД',
-                Markup.inlineKeyboard([
-                    Markup.button.url('Открыть профиль', `${SITE_URL}/profile?tab=settings&section=telegram`),
-                ]),
-            );
+            let text = '⭐ *Статус подписки*\n\n';
+            text += 'Аккаунт сайта не привязан.\n\n';
+            text += 'Привяжите профиль, чтобы видеть статус подписки и скачивать PDF глав.';
+            buttons.push([Markup.button.url('Привязать в профиле', `${SITE_URL}/profile?tab=settings&section=telegram`)]);
+            await ctx.reply(text, {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard(buttons),
+            });
             return;
         }
 
-        let text = `👤 *${info.username}*\n`;
-        text += info.isPremium ? '⭐ Премиум активен\n' : 'Премиум не активен\n';
-        text += info.telegramUsername ? `Telegram: @${info.telegramUsername}\n` : '';
-        text += '\nPDF глав доступен только премиум-подписчикам.';
-        await ctx.reply(text, { parse_mode: 'Markdown' });
+        let text = '⭐ *Статус подписки*\n\n';
+        text += `👤 *${info.username}*\n`;
+        if (info.isPremium) {
+            text += '✅ Премиум активен\n';
+            text += '\nДоступны платные главы и скачивание PDF в боте.';
+        } else {
+            text += '❌ Премиум не активен\n';
+            text += '\nПлатные главы и PDF в боте доступны только с подпиской.';
+            buttons.push([Markup.button.url('Оформить премиум', `${SITE_URL}/premium`)]);
+        }
+        if (info.telegramUsername) {
+            text += `\nTelegram: @${info.telegramUsername}`;
+        }
+        buttons.push([Markup.button.url('Профиль на сайте', `${SITE_URL}/profile`)]);
+
+        await ctx.reply(text, {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard(buttons),
+        });
     } catch (error) {
-        await ctx.reply('Не удалось получить статус. Попробуйте позже.');
+        await ctx.reply('Не удалось получить статус подписки. Попробуйте позже.');
     }
 }
 
@@ -80,6 +99,8 @@ function setupLinkCommand(bot) {
     });
 
     bot.command('status', handleStatusCommand);
+
+    bot.hears(SUBSCRIPTION_BUTTON, handleStatusCommand);
 
     bot.hears('🔗 Привязать аккаунт', async (ctx) => {
         await ctx.reply(

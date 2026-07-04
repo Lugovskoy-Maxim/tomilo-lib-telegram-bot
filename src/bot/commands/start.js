@@ -1,14 +1,8 @@
 /**
  * Команда /start
  */
-const { Markup } = require('telegraf');
 const { handleStartWithPayload } = require('./link');
-
-const MAIN_KEYBOARD = Markup.keyboard([
-    ['🔍 Поиск тайтлов', '📖 Мои тайтлы'],
-    ['📚 Каталог', '🆕 Новые главы'],
-    ['🔗 Привязать аккаунт', 'ℹ️ Помощь'],
-]).resize();
+const { MAIN_KEYBOARD } = require('../keyboards/main');
 
 function setupStartCommand(bot) {
     bot.start(async (ctx) => {
@@ -21,6 +15,7 @@ function setupStartCommand(bot) {
         await ctx.reply(
             'Привет! Я бот Tomilo Lib.\n\n' +
             '• Привяжите аккаунт сайта — /link КОД\n' +
+            '• Статус подписки — кнопка «⭐ Подписка»\n' +
             '• Уведомления о новых главах\n' +
             '• PDF глав — для премиум-подписчиков\n\n' +
             'Код генерируется в профиле на сайте.',

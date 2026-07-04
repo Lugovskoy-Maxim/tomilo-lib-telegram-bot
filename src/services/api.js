@@ -186,16 +186,52 @@ async function getChapterCount(titleId) {
 }
 
 /**
+ * Полный список глав тайтла (лёгкий summary, до 5000 глав одним запросом)
+ */
+async function getChapterSummaries(titleId, sortOrder = 'asc') {
+    const response = await apiClient.get(`/chapters/title/${titleId}/summary`, {
+        params: { sortOrder },
+        timeout: 60000,
+    });
+    const data = response.data.data || response.data;
+    return data.chapters || [];
+}
+
+/**
  * Получить все главы тайтла
  * @param {string} titleId - ID тайтла
  * @param {number} limit - макс. количество глав
  * @param {'asc'|'desc'} sortOrder - порядок: asc (1,2,3...) для списка глав, desc для новостей
  */
-async function getAllChapters(titleId, limit = 1000, sortOrder = 'asc') {
+async function getAllChapters(titleId, limit = 5000, sortOrder = 'asc') {
+    try {
+        const summaries = await getChapterSummaries(titleId, sortOrder);
+        if (summaries.length > 0) {
+            return summaries.slice(0, limit);
+        }
+    } catch (error) {
+        console.warn(`[API] summary для ${titleId} недоступен, fallback на постраничный список:`, error.message);
+    }
+
+    const pageSize = 200;
     const sort = sortOrder === 'desc' ? 'number:desc' : 'number:asc';
-    const response = await apiClient.get(`/chapters/title/${titleId}?sort=${sort}&limit=${limit}`);
-    const chaptersData = response.data.data || response.data;
-    return Array.isArray(chaptersData) ? chaptersData : chaptersData.chapters || [];
+    const all = [];
+    let page = 1;
+
+    while (all.length < limit) {
+        const response = await apiClient.get(`/chapters/title/${titleId}`, {
+            params: { sort, limit: pageSize, page },
+        });
+        const payload = response.data.data || response.data;
+        const batch = Array.isArray(payload) ? payload : (payload.chapters || []);
+        if (!batch.length) break;
+        all.push(...batch);
+        const hasMore = payload.pagination?.hasMore ?? batch.length >= pageSize;
+        if (!hasMore || batch.length < pageSize) break;
+        page += 1;
+    }
+
+    return all.slice(0, limit);
 }
 
 /**
@@ -329,6 +365,7 @@ module.exports = {
     getCatalog,
     getTitle,
     getChapterCount,
+    getChapterSummaries,
     getAllChapters,
     getChapter,
     updateChapter,

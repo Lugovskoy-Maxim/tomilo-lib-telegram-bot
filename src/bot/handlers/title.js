@@ -1,26 +1,26 @@
 /**
  * Обработчики для просмотра тайтлов и глав
  */
+const axios = require('axios');
 const { Markup } = require('telegraf');
 const { getTitle, getChapterCount, getAllChapters, getChapter, getBaseURL, getLinkedUser } = require('../../services/api');
-const { formatDate } = require('../../utils/helpers');
+const { formatDate, getMediaUrlCandidates } = require('../../utils/helpers');
 const { getLink: getChapterViewLink, setLink: setChapterViewLink } = require('../../db/links');
 const { createInstantViewForChapter } = require('../../services/telegraph');
 const { TELEGRAPH_ACCESS_TOKEN } = require('../../config');
 
-function resolveCoverImageUrl(coverImage, baseURL) {
+const CHAPTERS_PER_PAGE = 25;
+
+function extractCoverPath(coverImage) {
     if (!coverImage) return null;
-    // Strapi и др.: relation может быть массивом (data: [ {...} ])
     const single = Array.isArray(coverImage) ? coverImage[0] : coverImage;
     const media = single?.data ?? single;
     if (!media) return null;
-    let pathOrUrl;
-    if (typeof media === 'string') {
-        pathOrUrl = media;
-    } else if (media && typeof media === 'object') {
+    if (typeof media === 'string') return media;
+    if (typeof media === 'object') {
         const data = media.data ?? media;
         const attrs = data?.attributes ?? data;
-        pathOrUrl =
+        return (
             attrs?.url ??
             attrs?.formats?.large?.url ??
             attrs?.formats?.medium?.url ??
@@ -30,19 +30,115 @@ function resolveCoverImageUrl(coverImage, baseURL) {
             media.formats?.medium?.url ??
             media.formats?.small?.url ??
             single?.url ??
-            single?.formats?.large?.url ??
-            single?.formats?.medium?.url ??
-            single?.formats?.small?.url ??
             coverImage?.url ??
-            coverImage?.formats?.large?.url ??
-            coverImage?.formats?.medium?.url ??
-            coverImage?.formats?.small?.url;
+            null
+        );
     }
-    if (!pathOrUrl) return null;
-    if (pathOrUrl.startsWith('http')) return pathOrUrl;
-    if (pathOrUrl.startsWith('/uploads/')) return `${baseURL}${pathOrUrl}`;
-    if (pathOrUrl.startsWith('/')) return `${baseURL}/uploads${pathOrUrl}`;
-    return `${baseURL}/uploads/${pathOrUrl}`;
+    return null;
+}
+
+function chapterNum(ch) {
+    return ch.chapterNumber ?? ch.number ?? ch.chapter ?? '?';
+}
+
+async function sendCoverPhoto(ctx, coverImage, baseURL, caption) {
+    const path = extractCoverPath(coverImage);
+    const candidates = getMediaUrlCandidates(path, baseURL);
+    for (const url of candidates) {
+        try {
+            return await ctx.replyWithPhoto(url, { caption, parse_mode: 'Markdown' });
+        } catch (error) {
+            console.log(`[TITLE] Обложка по URL не загрузилась (${url}):`, error.message);
+        }
+    }
+    for (const url of candidates) {
+        try {
+            const response = await axios.get(url, {
+                responseType: 'arraybuffer',
+                timeout: 20000,
+                headers: { 'User-Agent': 'Mozilla/5.0' },
+            });
+            return await ctx.replyWithPhoto(
+                { source: Buffer.from(response.data) },
+                { caption, parse_mode: 'Markdown' },
+            );
+        } catch (error) {
+            console.log(`[TITLE] Обложка через буфер не загрузилась (${url}):`, error.message);
+        }
+    }
+    return null;
+}
+
+function buildChaptersCaption(title, allChapters, safePage, totalPages, startIndex, chapterSlice) {
+    const titleName = title?.name || title?.title || 'Тайтл';
+    const fromNum = chapterNum(allChapters[startIndex]);
+    const toIdx = Math.min(startIndex + chapterSlice.length - 1, allChapters.length - 1);
+    const toNum = chapterNum(allChapters[toIdx]);
+    const total = allChapters.length;
+
+    return (
+        `📖 *${titleName}*\n\n` +
+        `Главы *${fromNum}–${toNum}*  ·  стр. *${safePage}/${totalPages}*\n` +
+        `Всего: *${total}*`
+    );
+}
+
+function buildChapterKeyboard(titleId, allChapters, currentPage) {
+    const totalPages = Math.ceil(allChapters.length / CHAPTERS_PER_PAGE);
+    const safePage = Math.min(Math.max(currentPage, 1), totalPages);
+    const startIndex = (safePage - 1) * CHAPTERS_PER_PAGE;
+    const chapters = allChapters.slice(startIndex, startIndex + CHAPTERS_PER_PAGE);
+    const rows = [];
+
+    const chapterButtons = chapters.map((chapter, index) =>
+        Markup.button.callback(String(chapterNum(chapter)), `select_chapter_${titleId}_${startIndex + index}`),
+    );
+    for (let i = 0; i < chapterButtons.length; i += 5) {
+        rows.push(chapterButtons.slice(i, i + 5));
+    }
+
+    if (totalPages <= 1) {
+        return rows;
+    }
+
+    const nav = [];
+    if (safePage > 1) {
+        nav.push(Markup.button.callback('⏮', `chapters_page_${titleId}_1`));
+        nav.push(Markup.button.callback('◀️', `chapters_page_${titleId}_${safePage - 1}`));
+    }
+    nav.push(Markup.button.callback(`${safePage} / ${totalPages}`, `chapters_page_${titleId}_${safePage}`));
+    if (safePage < totalPages) {
+        nav.push(Markup.button.callback('▶️', `chapters_page_${titleId}_${safePage + 1}`));
+        nav.push(Markup.button.callback('⏭', `chapters_page_${titleId}_${totalPages}`));
+    }
+    rows.push(nav);
+
+    if (totalPages > 6) {
+        const segmentCount = Math.min(5, Math.max(3, Math.ceil(totalPages / 5)));
+        const pagesPerSegment = Math.ceil(totalPages / segmentCount);
+        const segments = [];
+
+        for (let s = 0; s < segmentCount; s++) {
+            const pageStart = s * pagesPerSegment + 1;
+            if (pageStart > totalPages) break;
+
+            const pageEnd = Math.min((s + 1) * pagesPerSegment, totalPages);
+            const idxStart = (pageStart - 1) * CHAPTERS_PER_PAGE;
+            const idxEnd = Math.min(pageEnd * CHAPTERS_PER_PAGE - 1, allChapters.length - 1);
+            const from = chapterNum(allChapters[idxStart]);
+            const to = chapterNum(allChapters[idxEnd]);
+            const active = safePage >= pageStart && safePage <= pageEnd;
+            const label = active ? `• ${from}–${to}` : `${from}–${to}`;
+
+            segments.push(Markup.button.callback(label, `chapters_page_${titleId}_${pageStart}`));
+        }
+
+        for (let i = 0; i < segments.length; i += 3) {
+            rows.push(segments.slice(i, i + 3));
+        }
+    }
+
+    return rows;
 }
 
 /** Получить объект обложки из тайтла (разные API могут отдавать в разных полях) */
@@ -108,37 +204,26 @@ async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
         caption += `Читай мангу, манхву и маньхуа на сайте TOMILO LIB tomilo-lib.ru\n`;
 
 
-        const coverImageUrl = resolveCoverImageUrl(getTitleCover(title), baseURL);
-        let cardMessage;
-        if (coverImageUrl) {
-            try {
-                cardMessage = await ctx.replyWithPhoto(coverImageUrl, { caption: caption, parse_mode: 'Markdown' });
-            } catch (photoErr) {
-                if (photoErr.message && (photoErr.message.includes('wrong type') || photoErr.message.includes('failed to get HTTP URL') || photoErr.code === 400)) {
-                    cardMessage = await ctx.reply(caption, { parse_mode: 'Markdown' });
-                } else {
-                    throw photoErr;
-                }
-            }
-        } else {
-            const coverRaw = getTitleCover(title);
+        const coverRaw = getTitleCover(title);
+        let cardMessage = await sendCoverPhoto(ctx, coverRaw, baseURL, caption);
+        if (!cardMessage) {
             if (coverRaw == null) {
-                console.log(`[TITLE] У тайтла "${titleName}" нет обложки в ответе API (проверьте populate coverImage/cover в GET /titles/:id).`);
+                console.log(`[TITLE] У тайтла "${titleName}" нет обложки в ответе API.`);
             } else {
-                console.log(`[TITLE] У тайтла "${titleName}" обложка в неожиданном формате:`, typeof coverRaw, JSON.stringify(coverRaw).slice(0, 200));
+                console.log(`[TITLE] Не удалось отправить обложку "${titleName}":`, extractCoverPath(coverRaw));
             }
             cardMessage = await ctx.reply(caption, { parse_mode: 'Markdown' });
         }
 
         const buttonRows = [
-            [Markup.button.callback('Выбрать главу', `read_title_${titleId}`), Markup.button.callback('🔖 Добавить в закладки', `bookmark_${titleId}`)]
+            [Markup.button.callback('📑 Список глав', `read_title_${titleId}`), Markup.button.callback('🔖 В закладки', `bookmark_${titleId}`)],
         ];
         const teletypeUrl = title.teletypeUrl || title.instantViewUrl;
         if (teletypeUrl) {
-            buttonRows.push([Markup.button.url('📱 Читать в Telegram (Teletype)', teletypeUrl)]);
+            buttonRows.push([Markup.button.url('📱 Читать в Telegram', teletypeUrl)]);
         }
 
-        const message = await ctx.reply('Выберите главу:', { reply_markup: { inline_keyboard: buttonRows } });
+        const message = await ctx.reply('👇 Выберите действие:', { reply_markup: { inline_keyboard: buttonRows } });
         ctx.session = ctx.session || {};
         if (cardMessage) ctx.session.lastCardMessageId = cardMessage.message_id;
         ctx.session.lastMessageId = message.message_id;
@@ -173,41 +258,11 @@ async function showChaptersHandler(ctx, titleId, page = 1) {
             return;
         }
 
-        const limitPerPage = 50;
-        const totalPages = Math.ceil(allChapters.length / limitPerPage);
-        const startIndex = (page - 1) * limitPerPage;
-        const endIndex = startIndex + limitPerPage;
-        const chapters = allChapters.slice(startIndex, endIndex);
-
-        const chapterNum = (ch) => ch.number != null ? ch.number : (ch.chapterNumber != null ? ch.chapterNumber : '?');
-        const chapterButtons = chapters.map((chapter, index) =>
-            Markup.button.callback(`Гл. ${chapterNum(chapter)}`, `select_chapter_${titleId}_${startIndex + index}`)
-        );
-
-        const buttonRows = [];
-        for (let i = 0; i < chapterButtons.length; i += 5) {
-            buttonRows.push(chapterButtons.slice(i, i + 5));
-        }
-
-        if (totalPages > 1) {
-            const navigationButtons = [];
-
-            if (page > 1) {
-                navigationButtons.push(Markup.button.callback('⬅️ Назад', `chapters_page_${titleId}_${page - 1}`));
-            }
-
-            navigationButtons.push(Markup.button.callback(`${page}/${totalPages}`, `chapters_page_${titleId}_${page}`));
-
-            if (page < totalPages) {
-                navigationButtons.push(Markup.button.callback('➡️ Далее', `chapters_page_${titleId}_${page + 1}`));
-            }
-
-            const navigationRows = [];
-            for (let i = 0; i < navigationButtons.length; i += 5) {
-                navigationRows.push(navigationButtons.slice(i, i + 5));
-            }
-            buttonRows.push(...navigationRows);
-        }
+        const totalPages = Math.ceil(allChapters.length / CHAPTERS_PER_PAGE);
+        const safePage = Math.min(Math.max(page, 1), totalPages);
+        const startIndex = (safePage - 1) * CHAPTERS_PER_PAGE;
+        const chapters = allChapters.slice(startIndex, startIndex + CHAPTERS_PER_PAGE);
+        const buttonRows = buildChapterKeyboard(titleId, allChapters, safePage);
 
         ctx.session = ctx.session || {};
         if (ctx.session.chaptersMessageId) {
@@ -219,8 +274,10 @@ async function showChaptersHandler(ctx, titleId, page = 1) {
             delete ctx.session.lastMessageId;
         }
 
-        const titleName = title?.name ? ` — ${title.name}` : '';
-        const chaptersMessage = await ctx.reply(`📖 Главы тайтла${titleName}\nСтраница ${page} из ${totalPages} (всего глав: ${allChapters.length}). Выберите главу:`, { reply_markup: { inline_keyboard: buttonRows } });
+        const chaptersMessage = await ctx.reply(
+            buildChaptersCaption(title, allChapters, safePage, totalPages, startIndex, chapters),
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttonRows } },
+        );
         ctx.session.chaptersMessageId = chaptersMessage.message_id;
     } catch (error) {
         console.error('Ошибка при получении глав:', error.message);
@@ -359,12 +416,20 @@ function setupTitleHandlers(bot) {
         await showChapterAsTeletype(ctx, titleId, chapterIndex);
     });
 
-    // PDF главы (только премиум)
+    // PDF главы (только премиум, из кэша если уже создавался)
     bot.action(/pdf_chapter_(.+)_(\d+)/, async (ctx) => {
         const titleId = ctx.match[1];
         const chapterIndex = parseInt(ctx.match[2]);
         const { prepareChapterForReading } = require('../../utils/pdf');
-        await prepareChapterForReading(ctx, titleId, chapterIndex);
+        await prepareChapterForReading(ctx, titleId, chapterIndex, { forceRecreate: false });
+    });
+
+    // Пересоздать PDF по запросу пользователя
+    bot.action(/pdf_recreate_(.+)_(\d+)/, async (ctx) => {
+        const titleId = ctx.match[1];
+        const chapterIndex = parseInt(ctx.match[2]);
+        const { prepareChapterForReading } = require('../../utils/pdf');
+        await prepareChapterForReading(ctx, titleId, chapterIndex, { forceRecreate: true });
     });
 
     // Обработчик для навигации по страницам глав
@@ -372,7 +437,7 @@ function setupTitleHandlers(bot) {
         const titleId = ctx.match[1];
         const page = parseInt(ctx.match[2]);
         try {
-            await ctx.answerCbQuery();
+            await ctx.answerCbQuery({ text: `Страница ${page}` });
             await ctx.deleteMessage(ctx.update.callback_query.message.message_id);
         } catch (e) {}
         await showChaptersHandler(ctx, titleId, page);

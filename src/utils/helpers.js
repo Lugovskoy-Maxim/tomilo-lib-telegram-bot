@@ -61,30 +61,97 @@ async function fixJPEG(imageBuffer) {
     }
 }
 
+const { S3_PUBLIC_URL, SITE_URL } = require('../config');
+
+/**
+ * Собрать возможные публичные URL для файла с сайта / S3
+ */
+function getMediaUrlCandidates(pathOrUrl, baseURL = SITE_URL.replace(/\/api$/, '')) {
+    if (!pathOrUrl) return [];
+    if (typeof pathOrUrl === 'object') {
+        const nested =
+            pathOrUrl.url ??
+            pathOrUrl.data?.attributes?.url ??
+            pathOrUrl.data?.url ??
+            pathOrUrl.attributes?.url;
+        if (nested) return getMediaUrlCandidates(nested, baseURL);
+        return [];
+    }
+
+    const raw = String(pathOrUrl).trim();
+    if (!raw) return [];
+
+    const candidates = [];
+    const add = (url) => {
+        if (url && !candidates.includes(url)) candidates.push(url);
+    };
+
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        add(raw);
+        return candidates;
+    }
+
+    const siteBase = baseURL.replace(/\/api$/, '');
+    const s3 = S3_PUBLIC_URL.replace(/\/$/, '');
+
+    if (raw.startsWith('/uploads/covers/')) {
+        const file = raw.slice('/uploads/covers/'.length);
+        add(`${s3}/covers/${file}`);
+        add(`${siteBase}${raw}`);
+        add(`${s3}${raw.replace('/uploads', '')}`);
+        return candidates;
+    }
+
+    if (raw.startsWith('/uploads/titles/')) {
+        const s3Path = raw.replace('/uploads', '');
+        add(`${s3}${s3Path}`);
+        add(`${siteBase}${raw}`);
+        return candidates;
+    }
+
+    if (raw.startsWith('/uploads/')) {
+        add(`${s3}${raw.replace('/uploads', '')}`);
+        add(`${siteBase}${raw}`);
+        return candidates;
+    }
+
+    if (raw.startsWith('/')) {
+        add(`${siteBase}/uploads${raw}`);
+        add(`${siteBase}${raw}`);
+        return candidates;
+    }
+
+    add(`${siteBase}/uploads/${raw}`);
+    add(`${s3}/${raw}`);
+    return candidates;
+}
+
+function resolveMediaUrl(pathOrUrl, baseURL) {
+    const candidates = getMediaUrlCandidates(pathOrUrl, baseURL);
+    return candidates[0] || null;
+}
+
 /**
  * Скачать изображение по URL
  */
 async function downloadImage(imageUrl, baseURL) {
-    let fullImageUrl;
-    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-        fullImageUrl = imageUrl;
-    } else if (imageUrl.startsWith('/uploads/')) {
-        fullImageUrl = `${baseURL}${imageUrl}`;
-    } else if (imageUrl.startsWith('/')) {
-        fullImageUrl = `${baseURL}/uploads${imageUrl}`;
-    } else {
-        fullImageUrl = `${baseURL}/uploads/${imageUrl}`;
-    }
-
-    const response = await axios.get(fullImageUrl, {
-        responseType: 'arraybuffer',
-        timeout: 30000,
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    const candidates = getMediaUrlCandidates(imageUrl, baseURL);
+    let lastError;
+    for (const fullImageUrl of candidates.length ? candidates : [imageUrl]) {
+        try {
+            const response = await axios.get(fullImageUrl, {
+                responseType: 'arraybuffer',
+                timeout: 30000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
+            return response.data;
+        } catch (error) {
+            lastError = error;
         }
-    });
-
-    return response.data;
+    }
+    throw lastError || new Error('Failed to download image');
 }
 
 /**
@@ -183,6 +250,8 @@ module.exports = {
     validateAndFixImage,
     hasSOIMarker,
     fixJPEG,
+    getMediaUrlCandidates,
+    resolveMediaUrl,
     downloadImage,
     sliceImageToMaxHeight,
     formatDate,
