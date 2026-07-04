@@ -2,14 +2,18 @@
   "name": "tomilo-lib-telegram-bot",
   "version": "1.0.0",
   "description": "Telegram bot for notifying about new manga chapters",
-  "main": "bot.js",
+  "main": "src/app.js",
   "scripts": {
-    "start": "node start.js",
-    "dev": "nodemon start.js",
-    "test-start": "node test-start.js",
-    "debug-start": "node debug-start.js",
-    "test-bot": "node test-bot.js",
-    "check-output": "node check-output.js"
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "test-start": "node tests/test-start.js",
+    "debug-start": "node tests/debug-start.js",
+    "test-bot": "node tests/test-bot.js",
+    "check-output": "node tests/check-output.js",
+    "server": "node src/server/index.js",
+    "telegraph:account": "node src/scripts/telegraph-create-account.js",
+    "instant-view": "node src/scripts/create-instant-view.js",
+    "recreate-instant-view": "node src/scripts/recreate-instant-view.js"
   },
   "keywords": [
     "telegram",
@@ -20,8 +24,9 @@
   ],
   "author": "Tomilo",
   "license": "MIT",
-  "dependencies": {
-    "axios": "^1.13.4",
+"dependencies": {
+        "axios": "^1.13.4",
+        "form-data": "^4.0.4",
     "dotenv": "^17.2.3",
     "node-cron": "^4.2.1",
     "node-fetch": "^3.3.2",
