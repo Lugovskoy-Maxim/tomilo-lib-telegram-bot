@@ -9,12 +9,18 @@ const {
     getAllChapters,
     getLinkedUser,
     getBookmarks,
-    updateNewChapterNotifications,
+    updateChapterNotifySettings,
 } = require('../../services/api');
 const { showChapterAsTeletype } = require('./title');
 
 const FEED_LIMIT = 15;
 const MY_BOOKMARK_CATEGORIES = new Set(['reading', 'favorites', 'planned', 'completed']);
+
+const NOTIFY_MODES = {
+    all: { key: 'all', label: '📚 Все новые главы', desc: 'Уведомления о каждой новой главе на сайте' },
+    bookmarks: { key: 'bookmarks', label: '🔖 Только закладки', desc: 'Только тайтлы из ваших закладок' },
+    off: { key: 'off', label: '🔕 Выключить', desc: 'Уведомления не приходят' },
+};
 
 function normalizeFeedItem(item) {
     const titleId = item.id ?? item.titleId ?? item._id;
@@ -37,47 +43,108 @@ function formatFeedDate(value) {
     return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-async function showFeedMenu(ctx) {
+function resolveNotifyMode(linkedInfo, session) {
+    if (linkedInfo?.chapterNotifyMode && NOTIFY_MODES[linkedInfo.chapterNotifyMode]) {
+        return linkedInfo.chapterNotifyMode;
+    }
+    if (session?.chapterNotifyMode && NOTIFY_MODES[session.chapterNotifyMode]) {
+        return session.chapterNotifyMode;
+    }
+    if (linkedInfo?.notifications?.newChapters === false) {
+        return 'off';
+    }
+    return 'bookmarks';
+}
+
+function modeButton(mode, current) {
+    const prefix = current === mode.key ? '✅ ' : '';
+    return Markup.button.callback(`${prefix}${mode.label}`, `feed_notif_${mode.key}`);
+}
+
+async function sendOrEditMenu(ctx, text, keyboard, edit = false) {
+    const opts = { parse_mode: 'Markdown', ...Markup.inlineKeyboard(keyboard) };
+    if (edit && ctx.callbackQuery?.message) {
+        try {
+            await ctx.editMessageText(text, opts);
+            return;
+        } catch (error) {
+            if (!error.message?.includes('message is not modified')) {
+                throw error;
+            }
+            return;
+        }
+    }
+    await ctx.reply(text, opts);
+}
+
+async function showFeedMenu(ctx, options = {}) {
     let linkedInfo = { linked: false, isPremium: false, notifications: { newChapters: true } };
     try {
         linkedInfo = await getLinkedUser(ctx.from.id);
     } catch (_) {}
 
-    const notifOn = linkedInfo.notifications?.newChapters !== false;
+    ctx.session = ctx.session || {};
+    const currentMode = resolveNotifyMode(linkedInfo, ctx.session);
+    const current = NOTIFY_MODES[currentMode];
+
     const rows = [
-        [Markup.button.callback('📰 Все новые главы', 'feed_all')],
+        [modeButton(NOTIFY_MODES.all, currentMode)],
+        [modeButton(NOTIFY_MODES.bookmarks, currentMode)],
+        [modeButton(NOTIFY_MODES.off, currentMode)],
+        [Markup.button.callback('📰 Посмотреть ленту', 'feed_browse')],
     ];
 
-    if (linkedInfo.linked) {
-        rows.push([Markup.button.callback('🔖 Только мои (закладки)', 'feed_mine')]);
-        if (notifOn) {
-            rows.push([Markup.button.callback('🔕 Выключить уведомления', 'feed_notif_off')]);
-        } else {
-            rows.push([Markup.button.callback('🔔 Включить уведомления', 'feed_notif_on')]);
-        }
-    } else {
+    if (!linkedInfo.linked) {
         rows.push([
             Markup.button.url(
-                '🔗 Привязать для «Мои главы»',
+                '🔗 Привязать аккаунт',
                 `${SITE_URL}/profile?tab=settings&section=telegram`,
             ),
         ]);
     }
 
-    let text = '🆕 *Лента новых глав*\n\nВыберите режим:';
+    const modeTitles = {
+        all: 'Все новые главы',
+        bookmarks: 'Только закладки',
+        off: 'Выключены',
+    };
+
+    let text =
+        '🔔 *Уведомления о новых главах*\n\n' +
+        `Сейчас: *${modeTitles[currentMode]}*\n` +
+        `_${current.desc}_`;
+
     if (linkedInfo.linked) {
-        text += `\n\nУведомления о главах в закладках: ${notifOn ? '✅ включены' : '❌ выключены'}`;
-        if (notifOn) {
-            text += '\n_Приходят в этот чат с обложкой тайтла._';
+        if (currentMode !== 'off') {
+            text += '\n\n_Сообщения приходят в этот чат с обложкой тайтла._';
         }
     } else {
-        text += '\n\n_Для «Только мои» и управления уведомлениями привяжите аккаунт сайта._';
+        text +=
+            '\n\n_Для режимов «Все» и «Закладки» привяжите аккаунт сайта._\n' +
+            '_Режим «Выключить» сохраняется локально в боте._';
     }
 
-    await ctx.reply(text, {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard(rows),
-    });
+    await sendOrEditMenu(ctx, text, rows, options.edit);
+}
+
+async function showFeedBrowseMenu(ctx) {
+    let linkedInfo = { linked: false };
+    try {
+        linkedInfo = await getLinkedUser(ctx.from.id);
+    } catch (_) {}
+
+    const rows = [[Markup.button.callback('📰 Все новые главы', 'feed_all')]];
+    if (linkedInfo.linked) {
+        rows.push([Markup.button.callback('🔖 Только мои (закладки)', 'feed_mine')]);
+    }
+    rows.push([Markup.button.callback('◀️ Настройки уведомлений', 'feed_menu')]);
+
+    await sendOrEditMenu(
+        ctx,
+        '📰 *Лента новых глав*\n\nВыберите, что показать:',
+        rows,
+        true,
+    );
 }
 
 async function fetchFeedItems(mode, telegramUserId) {
@@ -125,7 +192,7 @@ async function showNewChaptersFeed(ctx, mode = 'all') {
                     ? 'Новых глав в ваших закладках пока нет.'
                     : 'Новых глав пока нет.';
             await ctx.reply(emptyText, Markup.inlineKeyboard([
-                [Markup.button.callback('◀️ Меню ленты', 'feed_menu')],
+                [Markup.button.callback('◀️ Настройки уведомлений', 'feed_menu')],
             ]));
             return;
         }
@@ -167,7 +234,7 @@ async function showNewChaptersFeed(ctx, mode = 'all') {
             }
         }
 
-        buttonRows.push([Markup.button.callback('◀️ Меню ленты', 'feed_menu')]);
+        buttonRows.push([Markup.button.callback('◀️ Настройки уведомлений', 'feed_menu')]);
 
         await ctx.reply(message, {
             parse_mode: 'Markdown',
@@ -179,24 +246,49 @@ async function showNewChaptersFeed(ctx, mode = 'all') {
     }
 }
 
-async function toggleChapterNotifications(ctx, enabled) {
-    try {
+async function setChapterNotifyMode(ctx, mode) {
+    if (!NOTIFY_MODES[mode]) return;
+
+    ctx.session = ctx.session || {};
+    ctx.session.chapterNotifyMode = mode;
+
+    if (mode !== 'off') {
         const info = await getLinkedUser(ctx.from.id);
         if (!info.linked) {
-            await ctx.reply('Сначала привяжите аккаунт сайта: /link КОД');
+            await ctx.answerCbQuery?.({ text: 'Нужна привязка аккаунта' }).catch(() => {});
+            await ctx.reply(
+                'Для уведомлений о главах привяжите аккаунт сайта: /link КОД',
+                Markup.inlineKeyboard([
+                    Markup.button.url('Привязать', `${SITE_URL}/profile?tab=settings&section=telegram`),
+                ]),
+            );
             return;
         }
-        await updateNewChapterNotifications(ctx.from.id, enabled);
-        await ctx.reply(
-            enabled
-                ? '🔔 Уведомления о новых главах в Telegram *включены*.'
-                : '🔕 Уведомления о новых главах в Telegram *выключены*.\n\nЛенту в боте можно смотреть вручную.',
-            { parse_mode: 'Markdown' },
-        );
-        await showFeedMenu(ctx);
+    }
+
+    try {
+        if (mode === 'off') {
+            try {
+                const info = await getLinkedUser(ctx.from.id);
+                if (info.linked) {
+                    await updateChapterNotifySettings(ctx.from.id, 'off');
+                }
+            } catch (_) {}
+        } else {
+            await updateChapterNotifySettings(ctx.from.id, mode);
+        }
+
+        try {
+            await ctx.answerCbQuery({ text: NOTIFY_MODES[mode].label });
+        } catch (_) {}
+
+        await showFeedMenu(ctx, { edit: true });
     } catch (error) {
-        console.error('toggleChapterNotifications:', error);
-        await ctx.reply('Не удалось изменить настройки уведомлений.');
+        console.error('setChapterNotifyMode:', error);
+        try {
+            await ctx.answerCbQuery({ text: 'Ошибка сохранения' });
+        } catch (_) {}
+        await ctx.reply('Не удалось сохранить настройки уведомлений.');
     }
 }
 
@@ -243,7 +335,14 @@ function setupNavigationHandlers(bot) {
         try {
             await ctx.answerCbQuery();
         } catch (_) {}
-        await showFeedMenu(ctx);
+        await showFeedMenu(ctx, { edit: true });
+    });
+
+    bot.action('feed_browse', async (ctx) => {
+        try {
+            await ctx.answerCbQuery();
+        } catch (_) {}
+        await showFeedBrowseMenu(ctx);
     });
 
     bot.action('feed_all', async (ctx) => {
@@ -260,19 +359,11 @@ function setupNavigationHandlers(bot) {
         await showNewChaptersFeed(ctx, 'mine');
     });
 
-    bot.action('feed_notif_off', async (ctx) => {
-        try {
-            await ctx.answerCbQuery({ text: 'Выключаю…' });
-        } catch (_) {}
-        await toggleChapterNotifications(ctx, false);
-    });
-
-    bot.action('feed_notif_on', async (ctx) => {
-        try {
-            await ctx.answerCbQuery({ text: 'Включаю…' });
-        } catch (_) {}
-        await toggleChapterNotifications(ctx, true);
-    });
+    for (const mode of Object.keys(NOTIFY_MODES)) {
+        bot.action(`feed_notif_${mode}`, async (ctx) => {
+            await setChapterNotifyMode(ctx, mode);
+        });
+    }
 
     bot.action(/catalog_page_(\d+)/, async (ctx) => {
         const page = parseInt(ctx.match[1]);

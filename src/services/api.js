@@ -368,9 +368,16 @@ async function syncBotSession(telegramUserId, chatId, username) {
 }
 
 async function updateNewChapterNotifications(telegramUserId, enabled) {
+    const mode = enabled ? 'bookmarks' : 'off';
+    return updateChapterNotifySettings(telegramUserId, mode);
+}
+
+async function updateChapterNotifySettings(telegramUserId, mode) {
+    const normalized = mode === 'all' || mode === 'bookmarks' || mode === 'off' ? mode : 'bookmarks';
     const response = await botApiClient.post('/telegram/bot/notifications', {
         telegramUserId,
-        newChapters: !!enabled,
+        newChapters: normalized !== 'off',
+        chapterNotifyMode: normalized,
     });
     return unwrap(response);
 }
@@ -409,6 +416,7 @@ module.exports = {
     getChapterForUser,
     syncBotSession,
     updateNewChapterNotifications,
+    updateChapterNotifySettings,
     getPendingChapterNotifications,
     ackChapterNotifications,
 };

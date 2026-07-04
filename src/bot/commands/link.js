@@ -68,7 +68,13 @@ function formatProfileText(info) {
     if (n) {
         lines.push('');
         lines.push('🔔 *Уведомления*');
-        lines.push(`Новые главы: ${n.newChapters ? '✅ вкл' : '❌ выкл'}`);
+        const modeLabels = {
+            all: '📚 все новые главы',
+            bookmarks: '🔖 только закладки',
+            off: '🔕 выкл',
+        };
+        const mode = info.chapterNotifyMode || (n.newChapters ? 'bookmarks' : 'off');
+        lines.push(`Новые главы: ${modeLabels[mode] || (n.newChapters ? '✅ вкл' : '❌ выкл')}`);
         lines.push(`Новости: ${n.news ? '✅ вкл' : '❌ выкл'}`);
         lines.push(`Комментарии: ${n.comments ? '✅ вкл' : '❌ выкл'}`);
         if (n.newChapters === false) {
