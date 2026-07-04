@@ -42,11 +42,13 @@ const { setupCatalogCommand } = require('./commands/catalog');
 const { setupHelpCommand } = require('./commands/help');
 const { setupTitleHandlers } = require('./handlers/title');
 const { setupNavigationHandlers } = require('./handlers/navigation');
+const { setupBulkPdfHandlers } = require('./handlers/bulk-pdf');
 
 // ВАЖНО: Команды должны быть настроены ПОСЛЕ сессии
 // ВАЖНО: Порядок важен! Сначала уникальные команды, потом общие regex обработчики
 setupStartCommand(bot);
 setupLinkCommand(bot);
+setupBulkPdfHandlers(bot);
 setupCatalogCommand(bot);
 setupNavigationHandlers(bot);
 setupSearchCommand(bot);

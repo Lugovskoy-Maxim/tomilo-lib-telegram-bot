@@ -44,7 +44,14 @@ function buildPdfCaption(entry, chapterUrl) {
     return text;
 }
 
-function buildPdfKeyboard(titleId, chapterIndex, allChapters, chapter, chapterUrl) {
+function buildPdfKeyboard(titleId, chapterIndex, allChapters, chapter, chapterUrl, options = {}) {
+    const { bulkMode = false } = options;
+    if (bulkMode) {
+        return {
+            inline_keyboard: [[{ text: '🌐 На сайте', url: chapterUrl }]],
+        };
+    }
+
     const navigationButtons = [];
     if (chapterIndex > 0) {
         navigationButtons.push({
@@ -73,9 +80,9 @@ function buildPdfKeyboard(titleId, chapterIndex, allChapters, chapter, chapterUr
 }
 
 async function sendCachedPdf(ctx, entry, options) {
-    const { titleId, chapterIndex, allChapters, chapter, chapterUrl, statusMessage } = options;
+    const { titleId, chapterIndex, allChapters, chapter, chapterUrl, statusMessage, bulkMode } = options;
     const caption = buildPdfCaption({ ...entry, fromCache: true }, chapterUrl);
-    const replyMarkup = buildPdfKeyboard(titleId, chapterIndex, allChapters, chapter, chapterUrl);
+    const replyMarkup = buildPdfKeyboard(titleId, chapterIndex, allChapters, chapter, chapterUrl, { bulkMode });
 
     try {
         await ctx.replyWithDocument(entry.fileId, {
@@ -149,7 +156,7 @@ async function buildPdfBytes(chapter, title, baseURL, onProgress) {
  * Создать и отправить PDF (в памяти, с кэшем file_id)
  */
 async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chapterUrl, statusMessage, allChapters, options = {}) {
-    const { forceRecreate = false } = options;
+    const { forceRecreate = false, bulkMode = false } = options;
     const cid = chapterIdOf(chapter);
     const baseURL = getBaseURL();
     const chapterNum = chapterNumberOf(chapter);
@@ -183,19 +190,23 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
 
         if (!pdfBytes || successImages === 0) {
             if (statusMessage) {
-                await ctx.telegram.editMessageText(
-                    ctx.chat.id,
-                    statusMessage.message_id,
-                    null,
-                    '❌ Не удалось загрузить изображения для PDF.',
-                );
+                try {
+                    await ctx.telegram.editMessageText(
+                        ctx.chat.id,
+                        statusMessage.message_id,
+                        null,
+                        '❌ Не удалось загрузить изображения для PDF.',
+                    );
+                } catch (_) {}
             }
-            await ctx.reply('Не удалось создать PDF. Вы можете прочитать главу на сайте:', {
-                reply_markup: {
-                    inline_keyboard: [[{ text: '📖 Читать на сайте', url: chapterUrl }]],
-                },
-            });
-            return;
+            if (!bulkMode) {
+                await ctx.reply('Не удалось создать PDF. Вы можете прочитать главу на сайте:', {
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '📖 Читать на сайте', url: chapterUrl }]],
+                    },
+                });
+            }
+            return { ok: false, fromCache: false, error: 'build_failed' };
         }
 
         const sizeText = formatFileSize(pdfBytes.length);
@@ -223,7 +234,7 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
             {
                 caption: buildPdfCaption(meta, chapterUrl),
                 parse_mode: 'Markdown',
-                reply_markup: buildPdfKeyboard(titleId, chapterIndex, allChapters, chapter, chapterUrl),
+                reply_markup: buildPdfKeyboard(titleId, chapterIndex, allChapters, chapter, chapterUrl, { bulkMode }),
             },
         );
 
@@ -237,6 +248,7 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
                 await ctx.deleteMessage(statusMessage.message_id);
             } catch (_) {}
         }
+        return { ok: true, fromCache: false };
     };
 
     try {
@@ -250,15 +262,16 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
                     chapter,
                     chapterUrl,
                     statusMessage,
+                    bulkMode,
                 });
-                if (ok) return;
+                if (ok) return { ok: true, fromCache: true };
                 deletePdfEntry(cid);
             }
         } else {
             deletePdfEntry(cid);
         }
 
-        await withPdfLock(cid, async () => {
+        return await withPdfLock(cid, async () => {
             if (!forceRecreate) {
                 const cachedAgain = getPdfEntry(cid);
                 if (cachedAgain) {
@@ -269,12 +282,13 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
                         chapter,
                         chapterUrl,
                         statusMessage,
+                        bulkMode,
                     });
-                    if (ok) return;
+                    if (ok) return { ok: true, fromCache: true };
                     deletePdfEntry(cid);
                 }
             }
-            await sendFresh();
+            return sendFresh();
         });
     } catch (error) {
         console.error('[PDF] Ошибка при создании PDF:', error);
@@ -297,7 +311,60 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
         } else {
             await ctx.reply('Произошла ошибка при создании PDF. Попробуйте позже.');
         }
+        return { ok: false, fromCache: false, error: error.message };
     }
+}
+
+/**
+ * Отправить PDF одной главы (кэш Telegram → иначе генерация).
+ * @returns {Promise<{ ok: boolean, fromCache: boolean, error?: string }>}
+ */
+async function deliverChapterPdf(ctx, params) {
+    const {
+        titleId,
+        chapterIndex,
+        allChapters,
+        title,
+        chapter,
+        chapterUrl,
+        bulkMode = false,
+        forceRecreate = false,
+    } = params;
+
+    const cid = chapterIdOf(chapter);
+    const images = chapter.pages || [];
+    if (!images.length) {
+        return { ok: false, fromCache: false, error: 'no_pages' };
+    }
+
+    if (!forceRecreate) {
+        const cached = getPdfEntry(cid);
+        if (cached) {
+            const ok = await sendCachedPdf(ctx, cached, {
+                titleId,
+                chapterIndex,
+                allChapters,
+                chapter,
+                chapterUrl,
+                statusMessage: null,
+                bulkMode,
+            });
+            if (ok) return { ok: true, fromCache: true };
+            deletePdfEntry(cid);
+        }
+    }
+
+    return createAndSendPDF(
+        ctx,
+        titleId,
+        chapterIndex,
+        chapter,
+        title,
+        chapterUrl,
+        null,
+        allChapters,
+        { forceRecreate, bulkMode },
+    );
 }
 
 async function checkPremiumAccess(ctx) {
@@ -346,14 +413,21 @@ async function prepareChapterForReading(ctx, titleId, chapterIndex, options = {}
         const chapterId = chapterSummary._id ?? chapterSummary.id;
         const cid = String(chapterId);
 
+        const chapter = await getChapterForUser(ctx.from.id, chapterId);
+        const title = await getTitle(titleId);
+        const baseURL = getBaseURL();
+        const titleSlug = title.slug || titleId;
+        chapterUrl = `${baseURL}/titles/${titleSlug}/chapter/${chapterId}`;
+
+        const images = chapter.pages || [];
+        if (!images.length) {
+            await ctx.reply('Изображения главы не найдены.');
+            return;
+        }
+
         if (!options.forceRecreate) {
             const cached = getPdfEntry(cid);
             if (cached) {
-                const chapter = await getChapterForUser(ctx.from.id, chapterId).catch(() => ({}));
-                const title = await getTitle(titleId);
-                const baseURL = getBaseURL();
-                const titleSlug = title.slug || titleId;
-                chapterUrl = `${baseURL}/titles/${titleSlug}/chapter/${chapterId}`;
                 const ok = await sendCachedPdf(ctx, cached, {
                     titleId,
                     chapterIndex,
@@ -365,18 +439,6 @@ async function prepareChapterForReading(ctx, titleId, chapterIndex, options = {}
                 if (ok) return;
                 deletePdfEntry(cid);
             }
-        }
-
-        const chapter = await getChapterForUser(ctx.from.id, chapterId);
-        const title = await getTitle(titleId);
-        const baseURL = getBaseURL();
-        const titleSlug = title.slug || titleId;
-        chapterUrl = `${baseURL}/titles/${titleSlug}/chapter/${chapterId}`;
-
-        const images = chapter.pages || [];
-        if (!images.length) {
-            await ctx.reply('Изображения главы не найдены.');
-            return;
         }
 
         const statusText = options.forceRecreate
@@ -453,6 +515,8 @@ async function prepareChapterForReadingFromFeed(ctx, chapterId, options = {}) {
 
 module.exports = {
     createAndSendPDF,
+    deliverChapterPdf,
+    checkPremiumAccess,
     prepareChapterForReading,
     prepareChapterForReadingFromFeed,
 };

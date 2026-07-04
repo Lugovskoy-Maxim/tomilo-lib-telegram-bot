@@ -1,18 +1,55 @@
 /**
- * Кэш PDF в оперативной памяти: chapterId → Telegram file_id.
- * Файлы хранятся на серверах Telegram, на диске бота ничего не пишется.
+ * Кэш PDF: chapterId → Telegram file_id (файлы на серверах Telegram).
+ * Персистентность в data/pdf-cache.json — переживает перезапуск бота.
  */
+const fs = require('fs');
+const path = require('path');
+
+const DATA_DIR = path.join(process.cwd(), 'data');
+const CACHE_FILE = path.join(DATA_DIR, 'pdf-cache.json');
+
 const inflight = new Map();
-const cache = new Map();
+let store = null;
+let saveTimer = null;
+
+function load() {
+    if (store !== null) return store;
+    try {
+        const raw = fs.readFileSync(CACHE_FILE, 'utf8');
+        store = JSON.parse(raw);
+    } catch (e) {
+        if (e.code === 'ENOENT') store = {};
+        else {
+            console.error('[PDF-CACHE] Ошибка чтения:', e.message);
+            store = {};
+        }
+    }
+    return store;
+}
+
+function scheduleSave() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+        saveTimer = null;
+        try {
+            if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+            fs.writeFileSync(CACHE_FILE, JSON.stringify(store || {}, null, 0), 'utf8');
+        } catch (e) {
+            console.error('[PDF-CACHE] Ошибка записи:', e.message);
+        }
+    }, 300);
+}
 
 function getPdfEntry(chapterId) {
     if (!chapterId) return null;
-    return cache.get(String(chapterId)) || null;
+    const s = load();
+    return s[String(chapterId)] || null;
 }
 
 function setPdfEntry(chapterId, entry) {
     if (!chapterId || !entry?.fileId) return;
-    cache.set(String(chapterId), {
+    load();
+    store[String(chapterId)] = {
         fileId: entry.fileId,
         filename: entry.filename || 'chapter.pdf',
         titleName: entry.titleName || '',
@@ -22,17 +59,17 @@ function setPdfEntry(chapterId, entry) {
         totalImages: entry.totalImages || 0,
         chapterUrl: entry.chapterUrl || '',
         cachedAt: Date.now(),
-    });
+    };
+    scheduleSave();
 }
 
 function deletePdfEntry(chapterId) {
     if (!chapterId) return;
-    cache.delete(String(chapterId));
+    load();
+    delete store[String(chapterId)];
+    scheduleSave();
 }
 
-/**
- * Один запрос на генерацию PDF для главы; остальные ждут тот же Promise.
- */
 async function withPdfLock(chapterId, fn) {
     const key = String(chapterId);
     if (inflight.has(key)) {

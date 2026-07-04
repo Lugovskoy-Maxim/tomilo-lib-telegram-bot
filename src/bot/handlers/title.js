@@ -215,9 +215,17 @@ async function viewTitleHandler(ctx, titleId, chapterPage = 1) {
             cardMessage = await ctx.reply(caption, { parse_mode: 'Markdown' });
         }
 
+        let linkedInfo = { linked: false, isPremium: false };
+        try {
+            linkedInfo = await getLinkedUser(ctx.from.id);
+        } catch (_) {}
+
         const buttonRows = [
             [Markup.button.callback('📑 Список глав', `read_title_${titleId}`), Markup.button.callback('🔖 В закладки', `bookmark_${titleId}`)],
         ];
+        if (linkedInfo.isPremium) {
+            buttonRows.push([Markup.button.callback('📥 Скачать несколько глав', `bulk_pdf_start_${titleId}`)]);
+        }
         const teletypeUrl = title.teletypeUrl || title.instantViewUrl;
         if (teletypeUrl) {
             buttonRows.push([Markup.button.url('📱 Читать в Telegram', teletypeUrl)]);
@@ -263,6 +271,14 @@ async function showChaptersHandler(ctx, titleId, page = 1) {
         const startIndex = (safePage - 1) * CHAPTERS_PER_PAGE;
         const chapters = allChapters.slice(startIndex, startIndex + CHAPTERS_PER_PAGE);
         const buttonRows = buildChapterKeyboard(titleId, allChapters, safePage);
+
+        let linkedInfo = { linked: false, isPremium: false };
+        try {
+            linkedInfo = await getLinkedUser(ctx.from.id);
+        } catch (_) {}
+        if (linkedInfo.isPremium) {
+            buttonRows.push([Markup.button.callback('📥 Скачать несколько глав', `bulk_pdf_start_${titleId}`)]);
+        }
 
         ctx.session = ctx.session || {};
         if (ctx.session.chaptersMessageId) {
