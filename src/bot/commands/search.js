@@ -76,7 +76,8 @@ function setupSearchCommand(bot) {
         
         // Skip if this is a command or keyboard button
         const text = ctx.message?.text;
-        const keyboardButtons = ['🔍 Поиск тайтлов', '📚 Каталог', '🆕 Новые главы', '📖 Мои тайтлы', '🔗 Привязать аккаунт', 'ℹ️ Помощь'];
+        const { KEYBOARD_BUTTONS } = require('../keyboards/main');
+        const keyboardButtons = KEYBOARD_BUTTONS;
         if (text?.startsWith('/') || keyboardButtons.includes(text)) {
             return;
         }

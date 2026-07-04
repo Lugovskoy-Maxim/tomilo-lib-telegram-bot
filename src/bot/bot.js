@@ -31,6 +31,9 @@ bot.use(async (ctx, next) => {
 const { session } = require('telegraf');
 bot.use(session());
 
+const { setupSessionSync } = require('./middleware/session-sync');
+setupSessionSync(bot);
+
 // Настройка команд
 const { setupStartCommand } = require('./commands/start');
 const { setupLinkCommand } = require('./commands/link');

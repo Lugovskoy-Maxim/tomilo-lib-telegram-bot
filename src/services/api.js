@@ -359,6 +359,14 @@ async function getChapterForUser(telegramUserId, chapterId) {
     return normalizeChapter(unwrap(response));
 }
 
+async function syncBotSession(telegramUserId, chatId, username) {
+    await botApiClient.post('/telegram/bot/session', {
+        telegramUserId,
+        chatId,
+        username: username ? `@${username}` : undefined,
+    });
+}
+
 module.exports = {
     getBaseURL,
     searchTitles,
@@ -374,5 +382,6 @@ module.exports = {
     linkAccount,
     getBookmarks,
     getChapterForUser,
+    syncBotSession,
 };
 
