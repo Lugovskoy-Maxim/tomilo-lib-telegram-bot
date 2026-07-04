@@ -367,6 +367,14 @@ async function syncBotSession(telegramUserId, chatId, username) {
     });
 }
 
+async function updateNewChapterNotifications(telegramUserId, enabled) {
+    const response = await botApiClient.post('/telegram/bot/notifications', {
+        telegramUserId,
+        newChapters: !!enabled,
+    });
+    return unwrap(response);
+}
+
 module.exports = {
     getBaseURL,
     searchTitles,
@@ -383,5 +391,6 @@ module.exports = {
     getBookmarks,
     getChapterForUser,
     syncBotSession,
+    updateNewChapterNotifications,
 };
 

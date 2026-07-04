@@ -9,7 +9,7 @@ function getHelpText() {
         '/profile или /status — то же, что кнопка «Профиль»\n' +
         '/search — поиск тайтлов\n' +
         '/catalog — каталог\n' +
-        '/new — новые главы\n' +
+        '/new — лента новых глав (все / мои / уведомления)\n' +
         '/help — эта справка\n\n' +
         '• Каталог и поиск — выберите тайтл, затем главу.\n' +
         '• Чтение в Telegram — Instant View (Teletype/Telegraph).\n' +
