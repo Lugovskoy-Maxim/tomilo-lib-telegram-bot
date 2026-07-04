@@ -26,7 +26,7 @@ function formatProfileText(info) {
         return (
             '👤 *Профиль*\n\n' +
             'Аккаунт сайта не привязан.\n\n' +
-            'Привяжите профиль, чтобы видеть закладки, получать уведомления о новых главах и скачивать PDF.'
+            'Привяжите профиль, чтобы видеть закладки, получать уведомления о новых главах (бот-рассыльщик) и скачивать PDF.'
         );
     }
 
@@ -74,7 +74,9 @@ function formatProfileText(info) {
         if (n.newChapters === false) {
             lines.push('\n_Уведомления о главах отключены в настройках сайта._');
         } else if (info.telegramChatConfigured === false) {
-            lines.push('\n_Чат Telegram не настроен — напишите боту любое сообщение._');
+            lines.push('\n_Напишите боту любое сообщение, чтобы получать личные уведомления о главах в закладках._');
+        } else {
+            lines.push('\n_Личные уведомления о главах в закладках приходят от бота-рассыльщика (тот же @tomilo_lib_bot)._');
         }
     }
 
@@ -136,7 +138,7 @@ async function handleLinkCommand(ctx, codeArg) {
     try {
         const result = await linkAccount(code, telegramUserId, chatId, username);
         await ctx.reply(
-            `✅ Аккаунт привязан!\n\nСайт: *${result.username}*\n\nТеперь вы будете получать уведомления о новых главах в закладках.`,
+            `✅ Аккаунт привязан!\n\nСайт: *${result.username}*\n\nУведомления о новых главах в закладках приходят от бота-рассыльщика (с обложкой). Управление — в меню «🆕 Новые главы» или в профиле на сайте.`,
             { parse_mode: 'Markdown', ...buildMainKeyboard(true) },
         );
     } catch (error) {
