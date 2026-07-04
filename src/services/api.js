@@ -356,7 +356,7 @@ async function getChapterForUser(telegramUserId, chapterId) {
     const response = await botApiClient.get(`/telegram/bot/chapters/${chapterId}`, {
         params: { telegramUserId },
     });
-    return unwrap(response);
+    return normalizeChapter(unwrap(response));
 }
 
 module.exports = {

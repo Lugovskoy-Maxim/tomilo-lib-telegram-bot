@@ -63,6 +63,30 @@ async function fixJPEG(imageBuffer) {
 
 const { S3_PUBLIC_URL, SITE_URL } = require('../config');
 
+const FALLBACK_S3_ORIGIN = 'https://s3.regru.cloud/tomilolib';
+
+function normalizePathForS3(path) {
+    if (!path) return '';
+    let p = path.startsWith('/') ? path : `/${path}`;
+    if (p.startsWith('/api/')) p = p.replace(/^\/api\//, '/');
+    if (p.startsWith('/uploads/')) p = p.replace(/^\/uploads\//, '/');
+    if (p.startsWith('/uploads')) p = p.replace(/^\/uploads/, '');
+    if (p.startsWith('/tomilolib/')) p = p.replace(/^\/tomilolib\//, '/');
+    if (p.startsWith('/tomilolib')) p = p.replace(/^\/tomilolib/, '');
+    return p.startsWith('/') ? p : `/${p}`;
+}
+
+function s3Origins() {
+    const origins = [];
+    const add = (url) => {
+        const normalized = (url || '').replace(/\/$/, '');
+        if (normalized && !origins.includes(normalized)) origins.push(normalized);
+    };
+    add(S3_PUBLIC_URL);
+    add(FALLBACK_S3_ORIGIN);
+    return origins;
+}
+
 /**
  * Собрать возможные публичные URL для файла с сайта / S3
  */
@@ -86,31 +110,42 @@ function getMediaUrlCandidates(pathOrUrl, baseURL = SITE_URL.replace(/\/api$/, '
         if (url && !candidates.includes(url)) candidates.push(url);
     };
 
+    const siteBase = baseURL.replace(/\/api$/, '');
+    const s3Path = normalizePathForS3(raw);
+
     if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        try {
+            const url = new URL(raw.replace('/api/browse/', '/uploads/browse/'));
+            const host = url.hostname;
+            const isLibraryHost =
+                host.includes('s3.regru.cloud') ||
+                host.includes('tomilo-lib.ru') ||
+                host === 'localhost' ||
+                host === '127.0.0.1';
+            if (isLibraryHost) {
+                const normalized = normalizePathForS3(url.pathname);
+                for (const origin of s3Origins()) {
+                    add(`${origin}${normalized}`);
+                }
+                add(`${siteBase}/uploads${normalized}`);
+            }
+        } catch (_) {}
         add(raw);
         return candidates;
     }
 
-    const siteBase = baseURL.replace(/\/api$/, '');
-    const s3 = S3_PUBLIC_URL.replace(/\/$/, '');
+    for (const origin of s3Origins()) {
+        add(`${origin}${s3Path}`);
+    }
 
     if (raw.startsWith('/uploads/covers/')) {
         const file = raw.slice('/uploads/covers/'.length);
-        add(`${s3}/covers/${file}`);
         add(`${siteBase}${raw}`);
-        add(`${s3}${raw.replace('/uploads', '')}`);
-        return candidates;
-    }
-
-    if (raw.startsWith('/uploads/titles/')) {
-        const s3Path = raw.replace('/uploads', '');
-        add(`${s3}${s3Path}`);
-        add(`${siteBase}${raw}`);
+        add(`${siteBase}/covers/${file}`);
         return candidates;
     }
 
     if (raw.startsWith('/uploads/')) {
-        add(`${s3}${raw.replace('/uploads', '')}`);
         add(`${siteBase}${raw}`);
         return candidates;
     }
@@ -122,7 +157,6 @@ function getMediaUrlCandidates(pathOrUrl, baseURL = SITE_URL.replace(/\/api$/, '
     }
 
     add(`${siteBase}/uploads/${raw}`);
-    add(`${s3}/${raw}`);
     return candidates;
 }
 

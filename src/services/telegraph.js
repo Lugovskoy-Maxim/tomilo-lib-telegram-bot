@@ -7,7 +7,7 @@
  */
 const axios = require('axios');
 const FormData = require('form-data');
-const { downloadImage, sliceImageToMaxHeight } = require('../utils/helpers');
+const { downloadImage, sliceImageToMaxHeight, getMediaUrlCandidates } = require('../utils/helpers');
 
 const TELEGRAPH_API = 'https://api.telegra.ph';
 const TELEGRAPH_UPLOAD = 'https://telegra.ph/upload';
@@ -20,12 +20,8 @@ const TELEGRAPH_UPLOAD = 'https://telegra.ph/upload';
  */
 function normalizeImageUrl(url, baseURL) {
     if (typeof url !== 'string' || !url) return url;
-    if (url.startsWith('http')) return url;
-    let path = url.startsWith('/') ? url : `/${url}`;
-    if (path.startsWith('/chapters/') && !path.startsWith('/uploads/')) {
-        path = '/uploads' + path;
-    }
-    return baseURL + path;
+    const candidates = getMediaUrlCandidates(url, baseURL);
+    return candidates[0] || url;
 }
 
 /**
