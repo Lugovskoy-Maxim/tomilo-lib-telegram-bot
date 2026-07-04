@@ -375,6 +375,23 @@ async function updateNewChapterNotifications(telegramUserId, enabled) {
     return unwrap(response);
 }
 
+async function getPendingChapterNotifications(limit = 25) {
+    const response = await botApiClient.get('/telegram/bot/pending-chapter-notifications', {
+        params: { limit },
+    });
+    const data = unwrap(response);
+    return Array.isArray(data) ? data : [];
+}
+
+async function ackChapterNotifications(notificationIds) {
+    if (!notificationIds?.length) return { modified: 0 };
+    const response = await botApiClient.post(
+        '/telegram/bot/pending-chapter-notifications/ack',
+        { notificationIds },
+    );
+    return unwrap(response);
+}
+
 module.exports = {
     getBaseURL,
     searchTitles,
@@ -392,5 +409,7 @@ module.exports = {
     getChapterForUser,
     syncBotSession,
     updateNewChapterNotifications,
+    getPendingChapterNotifications,
+    ackChapterNotifications,
 };
 
