@@ -1,58 +1,98 @@
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
-const { BOT_TOKEN, API_BASE_URL } = require('./config');
+const { BOT_TOKEN, API_BASE_URL, SITE_URL } = require('./config');
 const { searchTitles } = require('./search');
 const { showCatalog } = require('./catalog');
-const { viewTitle, showChapters, selectChapter } = require('./title');
+const { viewTitle, showChapters, selectChapter, createAndSendPDF } = require('./title');
+const { handleLinkCommand, handleStatusCommand, handleStartWithPayload } = require('./link');
+const { showMyTitles } = require('./bookmarks');
+const { getLinkedUser, getChapterForUser } = require('./api');
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// Добавляем сессию для хранения данных между запросами
 const { session } = require('telegraf');
 bot.use(session());
 
-// Команда /start
-bot.start((ctx) => {
-    ctx.reply('Привет! Я бот для чтения манги и новелл.',
+bot.start(async (ctx) => {
+    const handled = await handleStartWithPayload(ctx);
+    if (handled) {
+        await ctx.reply(
+            'Используйте меню ниже для навигации.',
+            Markup.keyboard([
+                ['🔍 Поиск тайтлов', '📖 Мои тайтлы'],
+                ['📚 Каталог', '🆕 Новые главы'],
+                ['🔗 Привязать аккаунт', 'ℹ️ Помощь']
+            ]).resize()
+        );
+        return;
+    }
+
+    ctx.reply(
+        'Привет! Я бот Tomilo Lib.\n\n' +
+        '• Привяжите аккаунт сайта — /link КОД\n' +
+        '• Уведомления о новых главах\n' +
+        '• PDF глав — для премиум-подписчиков\n\n' +
+        'Код генерируется в профиле на сайте.',
         Markup.keyboard([
             ['🔍 Поиск тайтлов', '📖 Мои тайтлы'],
             ['📚 Каталог', '🆕 Новые главы'],
-            ['ℹ️ Помощь']
+            ['🔗 Привязать аккаунт', 'ℹ️ Помощь']
         ]).resize()
     );
 });
 
-// Команда /help
 bot.help((ctx) => {
-    ctx.reply('Я бот для чтения манги и новелл. Нажмите кнопку "🆕 Новые главы" для просмотра последних обновлений.\n\nДоступные команды:\n/search - Поиск тайтлов\n/catalog - Каталог\n/new - Новые главы\n/help - Помощь');
+    ctx.reply(
+        'Tomilo Lib Bot\n\n' +
+        '/link КОД — привязать аккаунт сайта\n' +
+        '/status — статус привязки и премиум\n' +
+        '/search — поиск тайтлов\n' +
+        '/catalog — каталог\n' +
+        '/new — новые главы\n\n' +
+        'PDF глав доступен привязанным премиум-пользователям.'
+    );
 });
 
-// Обработчик для кнопки "🔍 Поиск тайтлов"
+bot.command('link', async (ctx) => {
+    const code = (ctx.message.text || '').replace(/^\/link\s*/i, '').trim();
+    await handleLinkCommand(ctx, code);
+});
+
+bot.command('status', handleStatusCommand);
+
+bot.hears('🔗 Привязать аккаунт', async (ctx) => {
+    await ctx.reply(
+        'Сгенерируйте код в профиле на сайте (Настройки → Telegram) и отправьте:\n/link КОД',
+        Markup.inlineKeyboard([
+            Markup.button.url('Открыть профиль', `${SITE_URL}/profile?tab=settings&section=telegram`),
+        ]),
+    );
+});
+
+bot.hears('ℹ️ Помощь', (ctx) => {
+    ctx.reply('Доступные команды: /link, /status, /search, /catalog, /new, /help');
+});
+
 bot.hears('🔍 Поиск тайтлов', async (ctx) => {
     await searchTitles(ctx, bot);
 });
 
-// Команда /search
 bot.command('search', async (ctx) => {
     await searchTitles(ctx, bot);
 });
 
-// Команда /new
 bot.command('new', async (ctx) => {
     await showNewChaptersFeed(ctx);
 });
 
-// Обработчик для кнопки "📚 Каталог"
 bot.hears('📚 Каталог', async (ctx) => {
     await showCatalog(ctx, 1);
 });
 
-// Команда /catalog
 bot.command('catalog', async (ctx) => {
     await showCatalog(ctx, 1);
 });
 
-// Обработчик callback для навигации по каталогу
 bot.action(/catalog_page_(\d+)/, async (ctx) => {
     const page = parseInt(ctx.match[1]);
     try {
@@ -62,12 +102,8 @@ bot.action(/catalog_page_(\d+)/, async (ctx) => {
     await showCatalog(ctx, page);
 });
 
-// Добавляем обработчик для кнопки "📖 Мои тайтлы"
-bot.hears('📖 Мои тайтлы', async (ctx) => {
-    await ctx.reply('Функция "Мои тайтлы" пока не реализована.');
-});
+bot.hears('📖 Мои тайтлы', showMyTitles);
 
-// Обработчик callback для просмотра тайтла
 bot.action(/view_title_(.+)/, async (ctx) => {
     const match = ctx.match[1].match(/([a-f0-9]+)_(\d+)/);
     if (match) {
@@ -77,7 +113,6 @@ bot.action(/view_title_(.+)/, async (ctx) => {
     }
 });
 
-// Обработчик callback для кнопки "Читать"
 bot.action(/read_title_(.+)/, async (ctx) => {
     const titleId = ctx.match[1];
     try {
@@ -86,7 +121,6 @@ bot.action(/read_title_(.+)/, async (ctx) => {
     await showChapters(ctx, titleId);
 });
 
-// Обработчик callback для выбора главы
 bot.action(/select_chapter_(.+)_(\d+)/, async (ctx) => {
     const titleId = ctx.match[1];
     const chapterIndex = parseInt(ctx.match[2]);
@@ -96,21 +130,16 @@ bot.action(/select_chapter_(.+)_(\d+)/, async (ctx) => {
     await selectChapter(ctx, titleId, chapterIndex);
 });
 
-// Обработчик callback для навигации по страницам глав
 bot.action(/chapters_page_(.+)_(\d+)/, async (ctx) => {
     const titleId = ctx.match[1];
     const page = parseInt(ctx.match[2]);
     try {
         await ctx.answerCbQuery();
-        // Удаляем предыдущее сообщение со списком глав
         await ctx.deleteMessage(ctx.update.callback_query.message.message_id);
-    } catch (e) {
-        // Игнорируем ошибки (например, если сообщение уже удалено)
-    }
+    } catch (e) {}
     await showChapters(ctx, titleId, page);
 });
 
-// Обработчик callback для чтения главы из ленты
 bot.action(/read_feed_chapter_(.+)/, async (ctx) => {
     const chapterId = ctx.match[1];
     try {
@@ -118,77 +147,67 @@ bot.action(/read_feed_chapter_(.+)/, async (ctx) => {
     } catch (e) {}
 
     try {
-        // Получаем информацию о главе
-        const chapterResponse = await axios.get(`${API_BASE_URL}/chapters/${chapterId}`, { timeout: 10000 });
-        const chapter = chapterResponse.data.data || chapterResponse.data;
+        const linkedInfo = await getLinkedUser(ctx.from.id);
+        if (!linkedInfo.linked) {
+            await ctx.reply('Для PDF привяжите аккаунт: /link КОД');
+            return;
+        }
+        if (!linkedInfo.isPremium) {
+            await ctx.reply('PDF доступен только премиум-подписчикам: https://tomilo-lib.ru/premium');
+            return;
+        }
 
-        // Получаем информацию о тайтле
-        const titleResponse = await axios.get(`${API_BASE_URL}/titles/${chapter.titleId}`, { timeout: 10000 });
+        const chapter = await getChapterForUser(ctx.from.id, chapterId);
+        const titleId = chapter.titleId?._id || chapter.titleId;
+        const titleResponse = await axios.get(`${API_BASE_URL}/titles/${titleId}`, { timeout: 10000 });
         const title = titleResponse.data.data || titleResponse.data;
 
-        // Отправляем сообщение о начале генерации PDF
         const statusMessage = await ctx.reply(
-            `📖 Глава ${chapter.number || chapter.chapterNumber || "N/A"} формируется...\nЗагружено изображений: 0/${chapter.pages?.length || 0}`,
+            `📖 Глава ${chapter.number || chapter.chapterNumber || 'N/A'} формируется...\nЗагружено изображений: 0/${chapter.pages?.length || 0}`,
         );
 
-        // Запускаем создание PDF в фоновом режиме
-        const { createAndSendPDF } = require('./title');
-        createAndSendPDF(ctx, chapter.titleId, 0, chapter, title, `${API_BASE_URL.replace('/api', '')}/titles/${title.slug || chapter.titleId}/chapter/${chapterId}`, statusMessage, [chapter]).catch(console.error);
+        const baseURL = API_BASE_URL.replace('/api', '');
+        const titleSlug = title.slug || titleId;
+        const chapterUrl = `${baseURL}/titles/${titleSlug}/chapter/${chapterId}`;
+
+        createAndSendPDF(ctx, titleId, 0, chapter, title, chapterUrl, statusMessage, [chapter]).catch(console.error);
     } catch (error) {
         console.error('Ошибка при чтении главы из ленты:', error);
-        await ctx.reply('Произошла ошибка при создании PDF. Попробуйте позже.');
+        const msg = error.response?.data?.message || error.response?.data?.errors?.[0] || 'Произошла ошибка при создании PDF.';
+        await ctx.reply(msg);
     }
 });
 
-// Функция для отображения ленты новых глав
 async function showNewChaptersFeed(ctx) {
     try {
-        // Получаем список последних обновлений из API
         const response = await axios.get(`${API_BASE_URL}/titles/latest-updates?limit=10`, { timeout: 15000 });
         const chaptersData = response.data.data || response.data;
-        const chapters = Array.isArray(chaptersData) ? chaptersData : (chaptersData.chapters || []);
+        const items = Array.isArray(chaptersData) ? chaptersData : (chaptersData.chapters || []);
 
-        // Отладка: выводим структуру ответа API
-        console.log('API Response structure:', JSON.stringify(chaptersData, null, 2));
-        console.log('First chapter structure:', JSON.stringify(chapters[0], null, 2));
-
-        if (chapters.length === 0) {
+        if (items.length === 0) {
             await ctx.reply('Новых глав пока нет.');
             return;
         }
 
-        // Создаем сообщение с новыми главами
-        let message = '🆕 *Последние новые главы:*\n\n';
+        let message = '🆕 *Последние обновления:*\n\n';
 
-        for (let i = 0; i < chapters.length; i++) {
-            const chapter = chapters[i];
-            const titleName = chapter.title || 'Без названия';
-            const titleSlug = chapter.slug || '';
-            const chapterNumber = chapter.chapterNumber || 'N/A';
-            const chapterId = chapter.id; // This seems to be the title ID, not chapter ID
-
-            message += `${i + 1}. *${titleName}* - ${chapter.chapter}\n`;
-
-            // Добавляем дату, если есть
-            if (chapter.timeAgo) {
-                const date = new Date(chapter.timeAgo).toLocaleDateString('ru-RU');
-                message += `   📅 ${date}\n`;
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const titleName = item.title || 'Без названия';
+            const titleSlug = item.slug || '';
+            message += `${i + 1}. *${titleName}* — ${item.chapter || item.chapterNumber || 'N/A'}\n`;
+            if (titleSlug) {
+                message += `   [Читать на сайте](${SITE_URL}/titles/${titleSlug})\n`;
             }
-
-            // Добавляем ссылку на чтение на сайте
-            if (titleSlug && chapterId) {
-                message += `   [Читать на сайте](https://tomilo-lib.ru/titles/${titleSlug})\n`;
-            }
-
             message += '\n';
         }
 
-        // Создаем кнопки для чтения
-        const buttons = chapters.map((chapter, index) =>
-            Markup.button.callback(`Читать ${index + 1}`, `read_feed_chapter_${chapter._id}`)
-        );
+        const buttons = items
+            .filter((item) => item.latestChapterId)
+            .map((item, index) =>
+                Markup.button.callback(`PDF ${index + 1}`, `read_feed_chapter_${item.latestChapterId}`)
+            );
 
-        // Разбиваем кнопки на группы по 2
         const buttonRows = [];
         for (let i = 0; i < buttons.length; i += 2) {
             buttonRows.push(buttons.slice(i, i + 2));
@@ -196,9 +215,8 @@ async function showNewChaptersFeed(ctx) {
 
         await ctx.reply(message, {
             parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: buttonRows
-            }
+            reply_markup: buttonRows.length ? { inline_keyboard: buttonRows } : undefined,
+            disable_web_page_preview: true,
         });
     } catch (error) {
         console.error('Ошибка при получении ленты новых глав:', error);
@@ -206,39 +224,25 @@ async function showNewChaptersFeed(ctx) {
     }
 }
 
-// Обработчик для кнопки "🆕 Новые главы"
 bot.hears('🆕 Новые главы', async (ctx) => {
     await showNewChaptersFeed(ctx);
 });
 
-// Запуск бота
 bot.launch()
     .then(() => {
         console.log('Бот успешно запущен и готов к работе!');
-        // Принудительно очищаем буфер вывода
-        if (process.stdout && typeof process.stdout.flush === 'function') {
-            process.stdout.flush();
-        }
-        // Альтернативный способ принудительной очистки буфера
         process.stdout.write('');
-        
-        // Отправляем сообщение о запуске (опционально)
-        // Если у вас есть ID чата администратора, можно отправить сообщение:
-        // bot.telegram.sendMessage(ADMIN_CHAT_ID, 'Бот запущен и готов к работе!');
     })
     .catch((error) => {
         console.error('Ошибка запуска бота:', error);
     });
 
-// Обработка ошибок
 bot.catch((err, ctx) => {
     console.error('Ошибка обновления:', err);
     ctx.reply('Произошла ошибка. Пожалуйста, попробуйте позже.');
 });
 
-// Graceful shutdown
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 module.exports = bot;
-

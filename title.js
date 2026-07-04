@@ -4,6 +4,7 @@ const { PDFDocument } = require("pdf-lib");
 const fs = require("fs").promises;
 const path = require("path");
 const { API_BASE_URL } = require("./config");
+const { getLinkedUser, getChapterForUser } = require("./api");
 const sharp = require("sharp");
 
 // Функция для получения базового URL без /api для статических файлов
@@ -123,7 +124,7 @@ async function showChapters(ctx, titleId, page = 1) {
 
     // Получаем ВСЕ главы тайтла с большим лимитом
     const chaptersResponse = await axios.get(
-      `${API_BASE_URL}/chapters/title/${titleId}?sort=number:desc&limit=${totalChapters}`,
+      `${API_BASE_URL}/chapters/title/${titleId}?sortOrder=desc&limit=${Math.min(totalChapters, 200)}`,
       { timeout: 30000 },
     );
     const chaptersData = chaptersResponse.data.data || chaptersResponse.data;
@@ -549,7 +550,7 @@ async function createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chap
   }
 }
 
-// Функция для выбора главы и создания PDF
+// Функция для выбора главы и создания PDF (только для привязанных премиум-пользователей)
 async function selectChapter(ctx, titleId, chapterIndex) {
   // Немедленно отвечаем на нажатие кнопки, чтобы разблокировать бота
   try {
@@ -562,6 +563,20 @@ async function selectChapter(ctx, titleId, chapterIndex) {
   let chapterUrl = null;
 
   try {
+    const linkedInfo = await getLinkedUser(ctx.from.id);
+    if (!linkedInfo.linked) {
+      await ctx.reply(
+        'Для скачивания PDF привяжите аккаунт сайта.\n\nСгенерируйте код в профиле и отправьте: /link КОД',
+      );
+      return;
+    }
+    if (!linkedInfo.isPremium) {
+      await ctx.reply(
+        'PDF глав доступен только премиум-подписчикам.\n\nОформите подписку на сайте: https://tomilo-lib.ru/premium',
+      );
+      return;
+    }
+
     // Сначала получаем общее количество глав
     const countResponse = await axios.get(
       `${API_BASE_URL}/titles/${titleId}/chapters/count`,
@@ -577,7 +592,7 @@ async function selectChapter(ctx, titleId, chapterIndex) {
 
     // Получаем ВСЕ главы тайтла с лимитом равным общему количеству
     const chaptersResponse = await axios.get(
-      `${API_BASE_URL}/chapters/title/${titleId}?sort=number:desc&limit=${totalChapters}`,
+      `${API_BASE_URL}/chapters/title/${titleId}?sortOrder=desc&limit=${Math.min(totalChapters, 200)}`,
       { timeout: 30000 },
     );
     const chaptersData = chaptersResponse.data.data || chaptersResponse.data;
@@ -593,12 +608,8 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     const chapterSummary = allChapters[chapterIndex];
     const chapterId = chapterSummary._id;
 
-    // Получаем полную информацию о главе
-    const chapterResponse = await axios.get(
-      `${API_BASE_URL}/chapters/${chapterId}`,
-      { timeout: 15000 },
-    );
-    chapter = chapterResponse.data.data || chapterResponse.data;
+    // Полная глава с изображениями через bot API (с проверкой доступа)
+    chapter = await getChapterForUser(ctx.from.id, chapterId);
 
     // Получаем информацию о тайтле
     const titleResponse = await axios.get(`${API_BASE_URL}/titles/${titleId}`, {
@@ -626,13 +637,15 @@ async function selectChapter(ctx, titleId, chapterIndex) {
     createAndSendPDF(ctx, titleId, chapterIndex, chapter, title, chapterUrl, statusMessage, allChapters).catch(console.error);
   } catch (error) {
     console.error("Ошибка при выборе главы:", error);
+    const apiMsg = error.response?.data?.message || error.response?.data?.errors?.[0];
+    const errText = apiMsg || error.message || "Неизвестная ошибка";
     if (statusMessage) {
       try {
         await ctx.telegram.editMessageText(
           ctx.chat.id,
           statusMessage.message_id,
           null,
-          `❌ Ошибка: ${error.message || "Неизвестная ошибка"}`,
+          `❌ Ошибка: ${errText}`,
         );
       } catch (e) {}
     }
@@ -646,9 +659,9 @@ async function selectChapter(ctx, titleId, chapterIndex) {
         },
       );
     } else {
-      await ctx.reply("Произошла ошибка при создании PDF. Попробуйте позже.");
+      await ctx.reply(errText);
     }
   }
 }
 
-module.exports = { viewTitle, showChapters, selectChapter };
+module.exports = { viewTitle, showChapters, selectChapter, createAndSendPDF };
